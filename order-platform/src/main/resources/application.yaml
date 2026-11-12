@@ -1,6 +1,38 @@
 spring:
   application:
     name: order-platform
+  jackson:
+    read:
+      strict-duplicate-detection: true # reject {"a":1,"a":2} instead of letting the last value win
+    write:
+      write-bigdecimal-as-plain: true # money is written as 1000, never 1E+3
+  datasource:
+    connection-fetch: lazy
+  jpa:
+    hibernate:
+      # Flyway owns the schema (db/migration). Hibernate only checks that the entities match it.
+      ddl-auto: validate
+  cache:
+    type: caffeine
+    cache-names: orders
+    caffeine:
+      spec: maximumSize=1000,expireAfterWrite=5m,recordStats
+  data:
+    web:
+      pageable:
+        serialization-mode: via-dto
+        max-page-size: 100
+  mvc:
+    problemdetails:
+      enabled: true
+    apiversion:
+      default: "2"
+      supported: "1,2"
+
+management:
+  health:
+    redis:
+      enabled: false # Redis is only used by the "redis" profile
 
 shopflow:
   payment-timeout: 10s

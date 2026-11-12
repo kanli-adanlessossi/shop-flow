@@ -1,0 +1,488 @@
+# ShopFlow order-platform: every endpoint and every error case.
+#
+# Format: VS Code "REST Client" extension (humao.rest-client). Click "Send Request" above a
+# request, or run them from top to bottom. Requests depend on each other only through named
+# responses (for example createV2), so the file works on a database that already has data.
+#
+# Start the app first:   ./mvnw spring-boot:run     (Docker Compose starts Postgres)
+#
+# "# expect: NNN" states the status each request should return.
+#
+# API versions: v2 is the default and v1 is deprecated (it adds Deprecation and Sunset headers).
+# The version can be sent as a header (X-API-Version), a query parameter (api-version) or a
+# vendor media type (Accept: application/vnd.shopflow.v1+json). The first one found wins.
+
+@host = http://localhost:8080
+@json = application/json
+
+###############################################################################################
+# 1. Service
+###############################################################################################
+
+### Actuator health (UP)
+# expect: 200
+GET {{host}}/actuator/health
+
+### Health info, version 1 (flat profiles list, full build info, Deprecation header)
+# expect: 200
+GET {{host}}/api/health-info
+X-API-Version: 1
+
+### Health info, version 2 (compact), also the default when no version is sent
+# expect: 200
+GET {{host}}/api/health-info
+X-API-Version: 2
+
+### Health info with no version (default is 2)
+# expect: 200
+GET {{host}}/api/health-info
+
+### Health info with an unsupported version (problem detail)
+# expect: 400
+GET {{host}}/api/health-info
+X-API-Version: 3
+
+###############################################################################################
+# 2. Ways to choose the API version
+###############################################################################################
+
+### Version through the api-version query parameter
+# expect: 200
+GET {{host}}/api/health-info?api-version=1
+
+### Version through a vendor media type in Accept
+# expect: 200
+GET {{host}}/api/health-info
+Accept: application/vnd.shopflow.v1+json
+
+### Header wins over query parameter (header says 2, query says 1)
+# expect: 200
+GET {{host}}/api/health-info?api-version=1
+X-API-Version: 2
+
+### A leading "v" is accepted (v2)
+# expect: 200
+GET {{host}}/api/health-info
+X-API-Version: v2
+
+###############################################################################################
+# 3. Create orders (POST)
+###############################################################################################
+
+### Create, version 1 (no status, no totals; Location points at the new order)
+# @name createV1
+# expect: 201
+POST {{host}}/api/orders
+Content-Type: {{json}}
+X-API-Version: 1
+
+{
+  "customerId": "c-v1",
+  "discountCode": "WELCOME",
+  "lines": [
+    { "sku": "A", "quantity": 2, "unitPrice": 10.50 },
+    { "sku": "B", "quantity": 1, "unitPrice": 3.25 }
+  ]
+}
+
+### Create, version 2 (adds status, lineTotal and totals)
+# @name createV2
+# expect: 201
+POST {{host}}/api/orders
+Content-Type: {{json}}
+X-API-Version: 2
+
+{
+  "customerId": "c-v2",
+  "discountCode": "WELCOME",
+  "lines": [
+    { "sku": "A", "quantity": 2, "unitPrice": 10.50 },
+    { "sku": "B", "quantity": 1, "unitPrice": 3.25 }
+  ]
+}
+
+### Create with no version header (default version 2), no discount code
+# @name createDefault
+# expect: 201
+POST {{host}}/api/orders
+Content-Type: {{json}}
+
+{
+  "customerId": "c-default",
+  "lines": [
+    { "sku": "Z", "quantity": 4, "unitPrice": 2.00 }
+  ]
+}
+
+### Create an order to be paid (used by the conflict tests)
+# @name createToPay
+# expect: 201
+POST {{host}}/api/orders
+Content-Type: {{json}}
+
+{
+  "customerId": "c-paid",
+  "lines": [
+    { "sku": "P", "quantity": 1, "unitPrice": 99.99 }
+  ]
+}
+
+### Create an order to be cancelled and then deleted
+# @name createToCancel
+# expect: 201
+POST {{host}}/api/orders
+Content-Type: {{json}}
+
+{
+  "customerId": "c-cancel",
+  "lines": [
+    { "sku": "C", "quantity": 3, "unitPrice": 5.00 }
+  ]
+}
+
+### Create an order that stays pending and is deleted directly
+# @name createToDelete
+# expect: 201
+POST {{host}}/api/orders
+Content-Type: {{json}}
+
+{
+  "customerId": "c-delete",
+  "lines": [
+    { "sku": "D", "quantity": 1, "unitPrice": 1.00 }
+  ]
+}
+
+### Create: several validation errors at once (400 with a per-field errors list)
+# expect: 400
+POST {{host}}/api/orders
+Content-Type: {{json}}
+
+{
+  "customerId": " ",
+  "lines": [
+    { "sku": "", "quantity": 0, "unitPrice": 5.00 },
+    { "sku": "B", "quantity": -1, "unitPrice": 5.00 }
+  ]
+}
+
+### Create: no lines (400)
+# expect: 400
+POST {{host}}/api/orders
+Content-Type: {{json}}
+
+{ "customerId": "c1", "lines": [] }
+
+### Create: missing unitPrice (400)
+# expect: 400
+POST {{host}}/api/orders
+Content-Type: {{json}}
+
+{ "customerId": "c1", "lines": [ { "sku": "A", "quantity": 1 } ] }
+
+### Create: zero or negative unitPrice (400)
+# expect: 400
+POST {{host}}/api/orders
+Content-Type: {{json}}
+
+{ "customerId": "c1", "lines": [ { "sku": "A", "quantity": 1, "unitPrice": -1 } ] }
+
+### Create: unitPrice with three decimals (400, at most 2 allowed)
+# expect: 400
+POST {{host}}/api/orders
+Content-Type: {{json}}
+
+{ "customerId": "c1", "lines": [ { "sku": "A", "quantity": 1, "unitPrice": 1.234 } ] }
+
+### Create: malformed JSON (400)
+# expect: 400
+POST {{host}}/api/orders
+Content-Type: {{json}}
+
+{ "customerId":
+
+### Create: duplicate key in the body (400, strict duplicate detection)
+# expect: 400
+POST {{host}}/api/orders
+Content-Type: {{json}}
+
+{ "customerId": "a", "customerId": "b", "lines": [ { "sku": "A", "quantity": 1, "unitPrice": 1 } ] }
+
+### Create: no body at all (400)
+# expect: 400
+POST {{host}}/api/orders
+Content-Type: {{json}}
+
+### Create: wrong content type (415)
+# expect: 415
+POST {{host}}/api/orders
+Content-Type: text/plain
+
+hello
+
+### Create: unsupported API version (400)
+# expect: 400
+POST {{host}}/api/orders
+Content-Type: {{json}}
+X-API-Version: 3
+
+{ "customerId": "c1", "lines": [ { "sku": "A", "quantity": 1, "unitPrice": 1 } ] }
+
+###############################################################################################
+# 4. Read orders (GET)
+###############################################################################################
+
+### Get one order, version 1
+# expect: 200
+GET {{host}}/api/orders/{{createV1.response.body.$.id}}
+X-API-Version: 1
+
+### Get one order, version 2 (status, lineTotal, totals)
+# expect: 200
+GET {{host}}/api/orders/{{createV2.response.body.$.id}}
+X-API-Version: 2
+
+### Get the same order again (served from the cache)
+# expect: 200
+GET {{host}}/api/orders/{{createV2.response.body.$.id}}
+
+### Get an order that does not exist (404 problem detail with orderId)
+# expect: 404
+GET {{host}}/api/orders/999999999
+
+### Get with an id that is not a number (400)
+# expect: 400
+GET {{host}}/api/orders/abc
+
+### List, version 1 (id, customerId, createdAt; first page, newest first)
+# expect: 200
+GET {{host}}/api/orders?page=0&size=5
+X-API-Version: 1
+
+### List, version 2 (adds status and total)
+# expect: 200
+GET {{host}}/api/orders?page=0&size=5
+X-API-Version: 2
+
+### List, version 2, second page of size 2
+# expect: 200
+GET {{host}}/api/orders?page=1&size=2
+
+### List, filtered by status
+# expect: 200
+GET {{host}}/api/orders?status=PENDING
+
+### List, sorted by total, highest first
+# expect: 200
+GET {{host}}/api/orders?sort=total,desc
+
+### List, sorted by customer, A to Z
+# expect: 200
+GET {{host}}/api/orders?sort=customerId,asc
+
+### List: a size above the maximum is capped at 100 (200)
+# expect: 200
+GET {{host}}/api/orders?size=100000
+
+### List: unknown sort property (400)
+# expect: 400
+GET {{host}}/api/orders?sort=nope
+
+### List: invalid status value (400)
+# expect: 400
+GET {{host}}/api/orders?status=NOPE
+
+### Wrong method on a single order (405)
+# expect: 405
+POST {{host}}/api/orders/{{createV2.response.body.$.id}}
+Content-Type: {{json}}
+
+{}
+
+###############################################################################################
+# 5. Replace orders (PUT, only while PENDING)
+###############################################################################################
+
+### Replace, version 1 (customer, discount code and all lines are replaced)
+# expect: 200
+PUT {{host}}/api/orders/{{createV1.response.body.$.id}}
+Content-Type: {{json}}
+X-API-Version: 1
+
+{
+  "customerId": "c-v1-replaced",
+  "lines": [
+    { "sku": "R", "quantity": 5, "unitPrice": 4.00 }
+  ]
+}
+
+### The replaced order shows only the new line and new totals (cache was evicted)
+# expect: 200
+GET {{host}}/api/orders/{{createV1.response.body.$.id}}
+X-API-Version: 2
+
+### Replace, version 2
+# expect: 200
+PUT {{host}}/api/orders/{{createV2.response.body.$.id}}
+Content-Type: {{json}}
+X-API-Version: 2
+
+{
+  "customerId": "c-v2-replaced",
+  "discountCode": "SPRING",
+  "lines": [
+    { "sku": "X", "quantity": 1, "unitPrice": 20.00 },
+    { "sku": "Y", "quantity": 3, "unitPrice": 7.50 }
+  ]
+}
+
+### Replace: validation errors (400)
+# expect: 400
+PUT {{host}}/api/orders/{{createV2.response.body.$.id}}
+Content-Type: {{json}}
+
+{ "customerId": "", "lines": [ { "sku": "A", "quantity": 0, "unitPrice": 1 } ] }
+
+### Replace: order does not exist (404)
+# expect: 404
+PUT {{host}}/api/orders/999999999
+Content-Type: {{json}}
+
+{ "customerId": "c1", "lines": [ { "sku": "A", "quantity": 1, "unitPrice": 1 } ] }
+
+###############################################################################################
+# 6. Order status (PATCH, version 2 only)
+###############################################################################################
+
+### Mark an order as PAID
+# expect: 200
+PATCH {{host}}/api/orders/{{createToPay.response.body.$.id}}/status
+Content-Type: {{json}}
+
+{ "status": "PAID" }
+
+### Status: missing status (400)
+# expect: 400
+PATCH {{host}}/api/orders/{{createToPay.response.body.$.id}}/status
+Content-Type: {{json}}
+
+{}
+
+### Status: value that is not a status (400)
+# expect: 400
+PATCH {{host}}/api/orders/{{createToPay.response.body.$.id}}/status
+Content-Type: {{json}}
+
+{ "status": "NOPE" }
+
+### Status: not available in version 1, which has no status (404)
+# expect: 404
+PATCH {{host}}/api/orders/{{createToPay.response.body.$.id}}/status
+Content-Type: {{json}}
+X-API-Version: 1
+
+{ "status": "SHIPPED" }
+
+### Status: order does not exist (404)
+# expect: 404
+PATCH {{host}}/api/orders/999999999/status
+Content-Type: {{json}}
+
+{ "status": "PAID" }
+
+###############################################################################################
+# 7. Conflicts: a PAID order can be neither replaced nor deleted (409)
+###############################################################################################
+
+### Replace a paid order (409 problem detail with orderStatus)
+# expect: 409
+PUT {{host}}/api/orders/{{createToPay.response.body.$.id}}
+Content-Type: {{json}}
+
+{ "customerId": "c1", "lines": [ { "sku": "A", "quantity": 1, "unitPrice": 1 } ] }
+
+### Delete a paid order (409)
+# expect: 409
+DELETE {{host}}/api/orders/{{createToPay.response.body.$.id}}
+
+### List of paid orders (only version 2 can filter by status)
+# expect: 200
+GET {{host}}/api/orders?status=PAID
+
+###############################################################################################
+# 8. Delete orders (DELETE, allowed while PENDING or CANCELLED)
+###############################################################################################
+
+### Delete a pending order, version 1 (204; the same handler serves every version)
+# expect: 204
+DELETE {{host}}/api/orders/{{createToDelete.response.body.$.id}}
+X-API-Version: 1
+
+### The deleted order is gone (404)
+# expect: 404
+GET {{host}}/api/orders/{{createToDelete.response.body.$.id}}
+
+### Cancel an order...
+# expect: 200
+PATCH {{host}}/api/orders/{{createToCancel.response.body.$.id}}/status
+Content-Type: {{json}}
+
+{ "status": "CANCELLED" }
+
+### ...and delete it (204)
+# expect: 204
+DELETE {{host}}/api/orders/{{createToCancel.response.body.$.id}}
+
+### Delete an order that does not exist (404)
+# expect: 404
+DELETE {{host}}/api/orders/999999999
+
+### Delete with an id that is not a number (400)
+# expect: 400
+DELETE {{host}}/api/orders/abc
+
+###############################################################################################
+# 9. Sales report (admin; version 2 and later)
+###############################################################################################
+
+### Daily sales for the last 30 days (default range, gap days are zero rows)
+# expect: 200
+GET {{host}}/api/admin/reports/daily-sales
+
+### Daily sales for an explicit range (both ends inclusive, UTC days)
+# expect: 200
+GET {{host}}/api/admin/reports/daily-sales?from=2026-11-01&to=2026-11-30
+
+### Daily sales: only "from" (to defaults to today)
+# expect: 200
+GET {{host}}/api/admin/reports/daily-sales?from=2026-11-10
+
+### Daily sales: "from" after "to" (400)
+# expect: 400
+GET {{host}}/api/admin/reports/daily-sales?from=2026-11-30&to=2026-11-01
+
+### Daily sales: range longer than 366 days (400)
+# expect: 400
+GET {{host}}/api/admin/reports/daily-sales?from=2020-01-01&to=2026-11-30
+
+### Daily sales: not a date (400)
+# expect: 400
+GET {{host}}/api/admin/reports/daily-sales?from=yesterday
+
+### Daily sales: not available in version 1 (404)
+# expect: 404
+GET {{host}}/api/admin/reports/daily-sales
+X-API-Version: 1
+
+### Daily sales: unsupported version (400)
+# expect: 400
+GET {{host}}/api/admin/reports/daily-sales
+X-API-Version: 3
+
+###############################################################################################
+# 10. Routing errors
+###############################################################################################
+
+### Unknown path (404)
+# expect: 404
+GET {{host}}/api/nothing-here

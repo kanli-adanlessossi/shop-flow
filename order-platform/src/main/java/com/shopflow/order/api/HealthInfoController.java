@@ -20,7 +20,7 @@ public class HealthInfoController {
 		this.buildProperties = buildProperties;
 	}
 
-	@GetMapping("/api/health-info")
+	@GetMapping(path = "/api/health-info", version = "1")
 	public HealthInfo healthInfo() {
 		return new HealthInfo(
 				List.of(environment.getActiveProfiles()),
@@ -30,6 +30,17 @@ public class HealthInfoController {
 						buildProperties.getName(),
 						buildProperties.getVersion(),
 						buildProperties.getTime()));
+	}
+
+	/** v2: flattened payload with a single comma-free profile string and just the version. */
+	@GetMapping(path = "/api/health-info", version = "2")
+	public HealthInfoV2 healthInfoV2() {
+		return new HealthInfoV2(
+				String.join(",", environment.getActiveProfiles()),
+				buildProperties.getVersion());
+	}
+
+	public record HealthInfoV2(String profiles, @Nullable String version) {
 	}
 
 	public record HealthInfo(List<String> activeProfiles, BuildInfo build) {
