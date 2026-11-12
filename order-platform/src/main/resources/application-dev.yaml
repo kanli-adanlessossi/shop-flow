@@ -1,0 +1,3 @@
+shopflow:
+  payment-timeout: 60s
+  cancel-after: 5m

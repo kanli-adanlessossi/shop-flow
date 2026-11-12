@@ -1,4 +1,4 @@
-package com.shopflow.order_platform;
+package com.shopflow.order;
 
 import org.junit.jupiter.api.Test;
 import org.springframework.boot.test.context.SpringBootTest;

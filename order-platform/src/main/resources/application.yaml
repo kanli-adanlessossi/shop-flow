@@ -1,0 +1,7 @@
+spring:
+  application:
+    name: order-platform
+
+shopflow:
+  payment-timeout: 10s
+  cancel-after: 30m
