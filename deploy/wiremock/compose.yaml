@@ -1,0 +1,28 @@
+# Local stand-ins for the services order-platform calls. Not started by Spring Boot:
+# this file is deliberately outside order-platform/ so spring-boot-docker-compose never picks it up.
+#
+#   docker compose -f deploy/wiremock/compose.yaml up -d
+#   docker compose -f deploy/wiremock/compose.yaml down
+#
+# inventory-service  -> http://localhost:8081  (the default shopflow.inventory.base-url)
+# payment provider   -> http://localhost:8082
+#
+# Change delays and faults at runtime with deploy/wiremock/wiremock.ps1.
+name: shopflow-wiremock
+
+services:
+  inventory:
+    image: wiremock/wiremock:3.13.1
+    ports:
+      - "8081:8080"
+    volumes:
+      - ./inventory:/home/wiremock:ro
+    command: ["--global-response-templating", "--disable-gzip"]
+
+  payments:
+    image: wiremock/wiremock:3.13.1
+    ports:
+      - "8082:8080"
+    volumes:
+      - ./payments:/home/wiremock:ro
+    command: ["--global-response-templating", "--disable-gzip"]

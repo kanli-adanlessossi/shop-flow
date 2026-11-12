@@ -1,9 +1,10 @@
 # order-platform notes
 
-Two findings from working on this module, with the examples and numbers behind them.
+Findings from working on this module, with the examples and numbers behind them.
 
 - [Jackson 3 in Spring Boot 4.1](#jackson-3-in-spring-boot-41)
 - [Lazy connection fetching](#lazy-connection-fetching)
+- [Virtual threads: when they help and when they don't](#virtual-threads-when-they-help-and-when-they-dont)
 
 Versions: Spring Boot 4.1.2, Spring Framework 7.0.10, Jackson 3.1.7, Hibernate 7.4.13, Java 25.
 
@@ -100,7 +101,7 @@ A version 2 order (`GET /api/orders/{id}`):
 
 ```json
 {"id":2,"customerId":"c-v2","discountCode":"WELCOME","createdAt":"2026-11-12T11:15:32.373597Z",
- "status":"PENDING",
+ "status":"PENDING_PAYMENT",
  "lines":[{"sku":"A","quantity":2,"unitPrice":10.50,"lineTotal":21.00},
           {"sku":"B","quantity":1,"unitPrice":3.25,"lineTotal":3.25}],
  "totals":{"lineCount":2,"unitCount":3,"amount":24.25}}
@@ -110,7 +111,7 @@ A page. This needs `spring.data.web.pageable.serialization-mode: via-dto`. Witho
 serializes `PageImpl` as-is and logs that the JSON shape is not stable.
 
 ```json
-{"content":[{"id":3,"customerId":"c9","status":"PENDING","createdAt":"2026-11-12T10:30:07.309276Z","total":8.00}],
+{"content":[{"id":3,"customerId":"c9","status":"PENDING_PAYMENT","createdAt":"2026-11-12T10:30:07.309276Z","total":8.00}],
  "page":{"size":20,"number":0,"totalElements":3,"totalPages":1}}
 ```
 
@@ -228,3 +229,90 @@ Sampled `lazy` series: `active=0 pending=0` at every sample.
   `open-in-view: false` is the cleaner setting.
 - The better fix for the pattern in the experiment is to move the remote call outside the
   transaction. That frees the connection in both modes.
+
+---
+
+## Virtual threads: when they help and when they don't
+
+`spring.threads.virtual.enabled: true` is set in `application.yaml`. Tomcat then handles each
+request on a virtual thread (log name `tomcat-handler-N`, instead of `http-nio-auto-1-exec-N` with
+platform threads).
+
+### When they help
+
+- **Many requests that mostly wait.** A request that spends its time on a database, a Redis call or
+  an HTTP call to inventory-service parks its virtual thread while it waits, and the carrier thread
+  runs something else. You can have thousands of such requests in flight without a big thread pool.
+- **Simple blocking code.** The code stays plain and sequential (`RestClient`, JPA, `JdbcClient`).
+  No reactive rewrite is needed to get that concurrency.
+
+### When they don't
+
+- **A single request is not faster.** Each call still takes as long as the database or the remote
+  service takes. Virtual threads raise how many requests can wait at once, not how fast one runs.
+- **CPU-bound work.** Computing, serializing and mapping still need a real core. With more
+  runnable threads than cores they just compete.
+- **They remove the thread limit, not the other limits.** The next bottleneck is whatever the
+  threads wait on:
+  - the Hikari pool (`maximum-pool-size`): excess requests queue for a connection;
+  - the warehouse: many callers can now reach inventory-service at once.
+  Cap these on purpose. In this module `@ConcurrencyLimit` on `InventoryStockReservations.reserve`
+  (`shopflow.inventory.max-concurrent-requests`) is the only cap on parallel warehouse calls, and
+  the connection pool size limits database work.
+- **Pinning.** A virtual thread that blocks while it cannot unmount holds its carrier thread. On
+  Java 25, blocking inside `synchronized` no longer pins. Pinning can still happen during class
+  loading and class initialization, and in native frames.
+- **Do not pool them.** Create one per task. Limit concurrency with a semaphore or
+  `@ConcurrencyLimit`, not with a small thread pool.
+
+### What was checked in this module
+
+A JFR recording (JDK 25) of 400 concurrent clients against the app, with the pinning threshold at
+0 ms, gave 9,011 `jdk.VirtualThreadPinned` events:
+
+- 8,954 happened in the first second, when many threads hit cold classes at once, and all of them
+  were class loading or class initialization. The longest was 106 ms.
+- 57 came later. 44 of them were class loading, and the rest were first use of Jackson, Spring
+  Data, H2 and the report query.
+- None was blocked in application code.
+
+Not verified: a second, warmed-up run to confirm there is no pinning at steady state, and any run
+against real PostgreSQL or Redis, whose drivers could behave differently from H2 and Caffeine.
+
+### Load comparison: virtual threads off and on
+
+`load-tests/compare-virtual-threads.ps1` runs `load-tests/place-orders.js` (200 orders/s for 2
+minutes, each reserving stock at a WireMock inventory) against the app with
+`spring.threads.virtual.enabled` off and on, two runs each, in the order off, on, off, on. Every
+run starts from a fresh PostgreSQL, checks from a thread dump which threads serve requests, and does
+a 20 s unrecorded warm-up first. Summaries are in `load-tests/results/vt-*.json`.
+
+| Run | Virtual threads | Requests/s | p95 | p99 | Max | Errors | Dropped iterations |
+|---|---|---|---|---|---|---|---|
+| vt-off-1 | off | 199.9 | 65 ms | 232 ms | 542 ms | 0 | 0 |
+| vt-off-2 | off | 199.9 | 77 ms | 131 ms | 235 ms | 0 | 0 |
+| vt-on-1 | on | 199.9 | 101 ms | 246 ms | 473 ms | 0 | 0 |
+| vt-on-2 | on | 199.5 | 149 ms | 452 ms | 1254 ms | 0 | 61 |
+
+"Errors" counts failed requests and unexpected statuses; there were no 503s or 409s in the measured
+runs. Reading it:
+
+- Throughput matched the target in all four runs (about 24,000 orders each).
+- p95 was lower with virtual threads off (65 and 77 ms) than on (101 and 149 ms), and the one run
+  with dropped iterations was an "on" run. So there is no sign of a benefit here.
+- The spread between the two runs of the same mode (65 vs 77 ms off, 101 vs 149 ms on) is as large as
+  some of the differences between modes. Two runs per mode, on one machine with the database, WireMock
+  and k6 all in Docker, can't separate a real effect from noise.
+- At 200 requests/s with about 20 ms per request, only a handful of requests are in flight at once,
+  so the platform thread pool (200 threads by default) is nowhere near its limit. Virtual threads
+  help when many requests wait at the same time; this load does not create that.
+- Without the warm-up, the first full run (cold JVM) dropped 508 of 24,000 iterations and had a p99
+  of 3.7 s. Warm-up matters more here than the thread type.
+
+### Related
+
+- [Lazy connection fetching](#lazy-connection-fetching): with many concurrent requests, hold a
+  database connection only while querying.
+- A remote call inside a `@Transactional` method holds a connection (under `eager` fetching) for
+  its whole duration. `OrderService.create` reserves stock first, with no transaction open, and only
+  then saves the order in a short transaction of its own, for that reason.

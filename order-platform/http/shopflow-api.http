@@ -140,7 +140,7 @@ Content-Type: {{json}}
   ]
 }
 
-### Create an order that stays pending and is deleted directly
+### Create an order that stays waiting for payment and is deleted directly
 # @name createToDelete
 # expect: 201
 POST {{host}}/api/orders
@@ -270,7 +270,7 @@ GET {{host}}/api/orders?page=1&size=2
 
 ### List, filtered by status
 # expect: 200
-GET {{host}}/api/orders?status=PENDING
+GET {{host}}/api/orders?status=PENDING_PAYMENT
 
 ### List, sorted by total, highest first
 # expect: 200
@@ -300,7 +300,7 @@ Content-Type: {{json}}
 {}
 
 ###############################################################################################
-# 5. Replace orders (PUT, only while PENDING)
+# 5. Replace orders (PUT, only while PENDING_PAYMENT)
 ###############################################################################################
 
 ### Replace, version 1 (customer, discount code and all lines are replaced)
@@ -410,10 +410,10 @@ DELETE {{host}}/api/orders/{{createToPay.response.body.$.id}}
 GET {{host}}/api/orders?status=PAID
 
 ###############################################################################################
-# 8. Delete orders (DELETE, allowed while PENDING or CANCELLED)
+# 8. Delete orders (DELETE, allowed while PENDING_PAYMENT or CANCELLED)
 ###############################################################################################
 
-### Delete a pending order, version 1 (204; the same handler serves every version)
+### Delete an order waiting for payment, version 1 (204; the same handler serves every version)
 # expect: 204
 DELETE {{host}}/api/orders/{{createToDelete.response.body.$.id}}
 X-API-Version: 1

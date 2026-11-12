@@ -6,6 +6,12 @@ spring:
       strict-duplicate-detection: true # reject {"a":1,"a":2} instead of letting the last value win
     write:
       write-bigdecimal-as-plain: true # money is written as 1000, never 1E+3
+  threads:
+    virtual:
+      enabled: true
+  task:
+    execution:
+      propagate-context: true # @Async methods see the caller's trace context
   datasource:
     connection-fetch: lazy
   jpa:
@@ -22,6 +28,10 @@ spring:
       pageable:
         serialization-mode: via-dto
         max-page-size: 100
+  http:
+    clients:
+      # Service-to-service JSON calls: no sessions, so never store or replay cookies.
+      cookie-handling: disable
   mvc:
     problemdetails:
       enabled: true
@@ -37,3 +47,9 @@ management:
 shopflow:
   payment-timeout: 10s
   cancel-after: 30m
+  cancel-cron: "0 */5 * * * *" # when the unpaid-order cleanup runs (second minute hour day month weekday, UTC)
+  inventory:
+    base-url: http://localhost:8081
+    connect-timeout: 1s
+    read-timeout: 500ms
+    max-concurrent-requests: 10 # read by @ConcurrencyLimit on InventoryStockReservations

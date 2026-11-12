@@ -1,5 +1,9 @@
 package com.shopflow.order.domain;
 
+import java.time.Instant;
+import java.util.List;
+
+import org.springframework.data.domain.Limit;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
@@ -28,5 +32,10 @@ public interface OrderRepository extends JpaRepository<Order, Long> {
 			""",
 			countQuery = "select count(o) from Order o where o.status = :status")
 	Page<OrderSummary> findSummariesByStatus(@Param("status") OrderStatus status, Pageable pageable);
+
+	/** Ids of the oldest orders in a status created before the cutoff. */
+	@Query("select o.id from Order o where o.status = :status and o.createdAt < :cutoff order by o.createdAt, o.id")
+	List<Long> findIdsByStatusCreatedBefore(@Param("status") OrderStatus status, @Param("cutoff") Instant cutoff,
+			Limit limit);
 
 }

@@ -1,0 +1,10 @@
+{
+  "name": "inventory: release the stock reserved for an order",
+  "request": {
+    "method": "DELETE",
+    "urlPathPattern": "/api/stock/reservations/[^/]+"
+  },
+  "response": {
+    "status": 204
+  }
+}

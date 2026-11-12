@@ -1,0 +1,15 @@
+{
+  "name": "inventory: stock level for one SKU",
+  "request": {
+    "method": "GET",
+    "urlPathPattern": "/api/stock/[^/]+"
+  },
+  "response": {
+    "status": 200,
+    "headers": { "Content-Type": "application/json" },
+    "jsonBody": {
+      "sku": "{{request.pathSegments.[2]}}",
+      "available": 100
+    }
+  }
+}

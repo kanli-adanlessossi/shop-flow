@@ -1,0 +1,14 @@
+{
+  "name": "inventory: reserve stock under a caller-chosen reservation id",
+  "request": {
+    "method": "POST",
+    "urlPath": "/api/stock/reservations"
+  },
+  "response": {
+    "status": 200,
+    "headers": { "Content-Type": "application/json" },
+    "jsonBody": {
+      "reservationId": "{{jsonPath request.body '$.reservationId'}}"
+    }
+  }
+}

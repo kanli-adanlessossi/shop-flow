@@ -1,0 +1,16 @@
+{
+  "name": "payments: verify a provider callback (contract invented, adjust to the real provider)",
+  "request": {
+    "method": "POST",
+    "urlPath": "/api/payments/callbacks/verify"
+  },
+  "response": {
+    "status": 200,
+    "headers": { "Content-Type": "application/json" },
+    "jsonBody": {
+      "valid": true,
+      "paymentId": "{{jsonPath request.body '$.paymentId'}}",
+      "status": "CAPTURED"
+    }
+  }
+}

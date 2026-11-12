@@ -36,7 +36,11 @@ public class Order {
 
 	@Enumerated(EnumType.STRING)
 	@Column(nullable = false)
-	private OrderStatus status = OrderStatus.PENDING;
+	private OrderStatus status = OrderStatus.PENDING_PAYMENT;
+
+	/** The key the order's stock was reserved under at inventory-service. Never changes. */
+	@Column(nullable = false, updatable = false)
+	private String reservationId;
 
 	private @Nullable String discountCode;
 
@@ -51,21 +55,23 @@ public class Order {
 	/** For JPA only. */
 	protected Order() {
 		this.customerId = "";
+		this.reservationId = "";
 	}
 
-	public Order(String customerId, @Nullable String discountCode) {
+	public Order(String customerId, @Nullable String discountCode, String reservationId) {
 		this.customerId = customerId;
 		this.discountCode = discountCode;
+		this.reservationId = reservationId;
 	}
 
-	/** Only a pending order can have its content replaced. */
+	/** Only an order waiting for payment can have its content replaced. */
 	public boolean canBeModified() {
-		return this.status == OrderStatus.PENDING;
+		return this.status == OrderStatus.PENDING_PAYMENT;
 	}
 
 	/** Orders that were never paid, or were cancelled, can be removed. */
 	public boolean canBeDeleted() {
-		return this.status == OrderStatus.PENDING || this.status == OrderStatus.CANCELLED;
+		return this.status == OrderStatus.PENDING_PAYMENT || this.status == OrderStatus.CANCELLED;
 	}
 
 	/** Replaces the customer, discount code and all lines. Removed lines are deleted (orphan removal). */
@@ -93,6 +99,10 @@ public class Order {
 
 	public String getCustomerId() {
 		return this.customerId;
+	}
+
+	public String getReservationId() {
+		return this.reservationId;
 	}
 
 	public OrderStatus getStatus() {

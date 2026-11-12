@@ -4,6 +4,8 @@ import java.net.URI;
 import java.util.List;
 
 import org.jspecify.annotations.Nullable;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.HttpStatusCode;
@@ -15,7 +17,9 @@ import org.springframework.web.bind.annotation.RestControllerAdvice;
 import org.springframework.web.context.request.WebRequest;
 import org.springframework.web.servlet.mvc.method.annotation.ResponseEntityExceptionHandler;
 
+import com.shopflow.order.domain.InsufficientStockException;
 import com.shopflow.order.domain.InvalidSortException;
+import com.shopflow.order.domain.InventoryUnavailableException;
 import com.shopflow.order.domain.OrderNotFoundException;
 import com.shopflow.order.domain.OrderNotModifiableException;
 
@@ -27,6 +31,14 @@ import com.shopflow.order.domain.OrderNotModifiableException;
  */
 @RestControllerAdvice
 public class ApiExceptionHandler extends ResponseEntityExceptionHandler {
+
+	private static final Logger LOGGER = LoggerFactory.getLogger(ApiExceptionHandler.class);
+
+	private static final URI INSUFFICIENT_STOCK_TYPE =
+			URI.create("https://example.com/problems/insufficient-stock");
+
+	private static final URI INVENTORY_UNAVAILABLE_TYPE =
+			URI.create("https://example.com/problems/inventory-unavailable");
 
 	private static final URI ORDER_NOT_FOUND_TYPE =
 			URI.create("https://example.com/problems/order-not-found");
@@ -61,6 +73,25 @@ public class ApiExceptionHandler extends ResponseEntityExceptionHandler {
 		problem.setTitle("Order cannot be changed");
 		problem.setProperty("orderId", ex.getOrderId());
 		problem.setProperty("orderStatus", ex.getStatus());
+		return problem;
+	}
+
+	@ExceptionHandler(InsufficientStockException.class)
+	ProblemDetail handleInsufficientStock(InsufficientStockException ex) {
+		ProblemDetail problem = ProblemDetail.forStatusAndDetail(HttpStatus.CONFLICT, ex.getMessage());
+		problem.setType(INSUFFICIENT_STOCK_TYPE);
+		problem.setTitle("Insufficient stock");
+		return problem;
+	}
+
+	/** The cause (host, status) is in the logs, not in the response. */
+	@ExceptionHandler(InventoryUnavailableException.class)
+	ProblemDetail handleInventoryUnavailable(InventoryUnavailableException ex) {
+		LOGGER.warn("Inventory unavailable: {}", ex.getMessage(), ex);
+		ProblemDetail problem = ProblemDetail.forStatusAndDetail(HttpStatus.SERVICE_UNAVAILABLE,
+				"Stock could not be checked right now. Please try again later.");
+		problem.setType(INVENTORY_UNAVAILABLE_TYPE);
+		problem.setTitle("Inventory unavailable");
 		return problem;
 	}
 
