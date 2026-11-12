@@ -5,6 +5,8 @@ Findings from working on this module, with the examples and numbers behind them.
 - [Jackson 3 in Spring Boot 4.1](#jackson-3-in-spring-boot-41)
 - [Lazy connection fetching](#lazy-connection-fetching)
 - [Virtual threads: when they help and when they don't](#virtual-threads-when-they-help-and-when-they-dont)
+- [Kafka consumer groups and share groups](#kafka-consumer-groups-and-share-groups)
+- [Delivery guarantees: at-least-once vs. exactly-once](#delivery-guarantees-at-least-once-vs-exactly-once)
 
 Versions: Spring Boot 4.1.2, Spring Framework 7.0.10, Jackson 3.1.7, Hibernate 7.4.13, Java 25.
 
@@ -316,3 +318,105 @@ runs. Reading it:
 - A remote call inside a `@Transactional` method holds a connection (under `eager` fetching) for
   its whole duration. `OrderService.create` reserves stock first, with no transaction open, and only
   then saves the order in a short transaction of its own, for that reason.
+
+---
+
+## Kafka consumer groups and share groups
+
+This app reads `order-events` with a classic **consumer group** (`notifications`). Kafka 4.x also has
+**share groups** ("Kafka queues", KIP-932), a different way to spread a topic over several consumers.
+
+| | Consumer group (used here) | Share group |
+|---|---|---|
+| Who reads a partition | Exactly one consumer in the group at a time | Any consumer in the group; several can read the same partition at once |
+| Parallelism limit | Number of partitions (3 for `order-events`) | Not tied to partitions; add consumers freely |
+| Acknowledgment | Offset per partition: a commit says "everything before this is done" | Per record: accept, release (try again) or reject |
+| Order | Kept within a partition, so per-order order holds with the order id as key | Not guaranteed when consumers share a partition: records are handled concurrently and a released one comes back later |
+| Failed record | Handled by the client: blocking retry (partition waits) or retry and dead-letter topics, as built here | The broker counts deliveries and archives a record after a limit (default 5), so a poison record cannot loop forever |
+| Members join or leave | Rebalance: partitions are reassigned, and the classic protocol briefly stops all consumers (measured here: about 1 s) | Partitions are not handed over exclusively, so a member leaving does not leave a partition waiting on it |
+| Spring Kafka | `@KafkaListener` with the usual container factory, `@RetryableTopic`, `DefaultErrorHandler` | Separate share consumer factory and container factory; no batch listeners, no message converters yet, and no seek or dead-letter-topic support in the share container |
+| Maturity | Long established | Early access in Kafka 4.0, preview in 4.1, production-ready in 4.2; Spring Kafka 4.1 supports it as production |
+
+**Which fits this project:** consumer groups. `order.placed` and `order.cancelled` for one order must
+be handled in order (see the ordering note under non-blocking retries), the volume is small, and the
+retry topics, dead-letter handling and inbox deduplication already built here rely on the consumer
+group model. A share group would suit work where order does not matter and the number of workers
+must exceed the number of partitions, for example sending many independent notifications in parallel.
+
+**Not verified in this project:** I have not run a share group here. This setup uses Kafka 4.3.2 and
+Spring Kafka 4.1.2, so it should be possible, but a broker may need share groups switched on first
+(check the Kafka documentation for the version in use). Rows describing share groups come from the
+sources below, not from a test. The ordering row is my reading of how concurrent consumption of one
+partition works; the sources do not state a guarantee either way.
+
+Sources: [KIP-932](https://cwiki.apache.org/confluence/spaces/KAFKA/pages/255070434/KIP-932+Queues+for+Kafka),
+[Spring Kafka reference, Kafka Queues (Share Consumer)](https://docs.spring.io/spring-kafka/reference/kafka/kafka-queues.html).
+
+---
+
+## Delivery guarantees: at-least-once vs. exactly-once
+
+**Short answer:** ShopFlow delivers events **at least once** and makes the consumers **idempotent**.
+It does **not** provide exactly-once delivery. For the database effects of a handler the result
+equals exactly-once processing; for anything outside the database (a notification sent to a
+customer) it is still at-least-once.
+
+### The three guarantees
+
+| Guarantee | A message is delivered... | Cost when something fails |
+|---|---|---|
+| At-most-once | zero or one time | A failure can lose the message. Nothing is ever repeated. |
+| At-least-once | one or more times | A failure causes a repeat. Nothing is lost, but the receiver sees duplicates. |
+| Exactly-once | exactly one time | Only possible when sending, the effect and the "done" mark commit together as one atomic step. |
+
+A sender cannot tell "the message was lost" from "the message arrived but the acknowledgement was
+lost". To avoid losing data it sends again, and that is where duplicates come from. So a system
+across a network is at-least-once, and "exactly-once" in practice means at-least-once delivery plus
+a receiver that ignores repeats (idempotence), or one atomic transaction that covers every step.
+
+Kafka's own exactly-once support (idempotent producer, transactions, `read_committed`) is atomic
+only for a flow that starts and ends in Kafka topics. It cannot include a PostgreSQL write or an
+email, so it does not help with the path used here and is not enabled.
+
+### What ShopFlow does at each step
+
+| Step | Guarantee | Why |
+|---|---|---|
+| Order change to outbox row | Exactly once | `OutboxEvents.add` runs in the same database transaction as the order change (and refuses to run outside one). The event exists if and only if the change committed. |
+| Outbox relay to Kafka | At least once | The relay sends, then marks the row published. A crash between the two, or a send that timed out (5 s) but was accepted, makes it send the row again. The Kafka producer's idempotence only removes duplicates from its own internal retries in one session, not these. |
+| Kafka to listener | At least once | The offset is committed after the handler. A rebalance or crash before the commit redelivers the record. Each hop through a retry topic is another produce and can duplicate too. |
+| Handler, database effects | Effectively once | `OrderEventHandler` records the event id in `processed_events` in the same transaction as the work. A repeat finds the row and is skipped. If the work fails, the row rolls back and a retry does the work again. |
+| Handler, external call | At least once | A notification leaves the database. If the app fails after sending but before the commit, the retry sends it again. The event id is passed to `NotificationSender` as the idempotency key so a provider that supports one can drop the repeat. `LoggingNotificationSender` is only a stub. |
+| Payment webhook | Effectively once | The provider delivers at least once. `OrderService.confirmPayment` marks the provider event id in the same table (consumer `payment-webhook`) inside the transaction that confirms the order. A retry answers `DUPLICATE`. |
+
+### Where the guarantee has gaps
+
+- **Dead letters.** An event that fails all 4 attempts goes to `order-events-dlt` and the
+  `dead_letters` table and is **not** handled until someone replays it. For that event the
+  behaviour is zero deliveries, not at-least-once. The `shopflow.events.dead_letters` counter is the
+  alert hook.
+- **Inbox retention.** Event ids are remembered for `shopflow.processed-events-retention` (14 days).
+  A duplicate arriving after the purge would be handled again. Keep it above the topic retention
+  (Kafka default 7 days).
+- **Ordering.** Retry topics deliver a retried event after later events for the same order, so
+  handlers must not assume arrival order. They do not yet tolerate out-of-order events.
+- **Outbox row that cannot be sent.** The relay stops at the first failing row to keep per-order
+  order, so one permanently unsendable row blocks the rest (listed in the ADR as a fix before
+  production).
+- **Unreadable messages.** They go straight to the dead-letter topic, but are not stored in
+  `dead_letters`, not counted, and not seen by `@DltHandler`.
+
+### Rules for new code
+
+- Assume every event can arrive twice, and later than a newer event for the same order.
+- Do the database work and the `processed_events` insert in **one** transaction.
+- Pass the event id as the idempotency key to every external system that accepts one.
+- A new consumer needs its own consumer name in `processed_events`; the primary key is
+  `(consumer, event_id)`.
+- Do not describe the system as exactly-once in docs or interviews. Say "at-least-once delivery
+  with idempotent consumers".
+
+Verified earlier with real brokers on H2 and PostgreSQL: one event delivered three times is handled
+once; a send that fails once is retried and leaves one inbox row; an event that exhausts its retries
+leaves one `dead_letters` row and no inbox row. The late-ack and crash-between-send-and-mark cases
+above follow from the code and are not covered by a test.

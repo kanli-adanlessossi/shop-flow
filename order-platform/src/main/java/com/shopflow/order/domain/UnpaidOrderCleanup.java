@@ -45,13 +45,10 @@ public class UnpaidOrderCleanup {
 
 	private final Clock clock;
 
-	private final CancellationNotifier notifier;
-
-	public UnpaidOrderCleanup(OrderService orders, StockReservations stock, CancellationNotifier notifier,
-			ShopFlowProperties properties, Clock clock) {
+	public UnpaidOrderCleanup(OrderService orders, StockReservations stock, ShopFlowProperties properties,
+			Clock clock) {
 		this.orders = orders;
 		this.stock = stock;
-		this.notifier = notifier;
 		this.properties = properties;
 		this.clock = clock;
 	}
@@ -95,12 +92,8 @@ public class UnpaidOrderCleanup {
 			return false;
 		}
 		this.stock.release(reservationId.get());
-		return this.orders.cancelIfStillUnpaid(id, cutoff)
-				.map(customerId -> {
-					this.notifier.sendCancellationNotice(id, customerId);
-					return true;
-				})
-				.orElse(false);
+		// The customer is told through the order.cancelled event that this step records in the outbox.
+		return this.orders.cancelIfStillUnpaid(id, cutoff).isPresent();
 	}
 
 }

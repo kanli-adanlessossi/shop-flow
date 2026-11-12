@@ -114,7 +114,7 @@ Content-Type: {{json}}
   ]
 }
 
-### Create an order to be paid (used by the conflict tests)
+### Create an order to be confirmed (used by the conflict tests)
 # @name createToPay
 # expect: 201
 POST {{host}}/api/orders
@@ -354,12 +354,12 @@ Content-Type: {{json}}
 # 6. Order status (PATCH, version 2 only)
 ###############################################################################################
 
-### Mark an order as PAID
+### Mark an order as CONFIRMED
 # expect: 200
 PATCH {{host}}/api/orders/{{createToPay.response.body.$.id}}/status
 Content-Type: {{json}}
 
-{ "status": "PAID" }
+{ "status": "CONFIRMED" }
 
 ### Status: missing status (400)
 # expect: 400
@@ -388,26 +388,26 @@ X-API-Version: 1
 PATCH {{host}}/api/orders/999999999/status
 Content-Type: {{json}}
 
-{ "status": "PAID" }
+{ "status": "CONFIRMED" }
 
 ###############################################################################################
-# 7. Conflicts: a PAID order can be neither replaced nor deleted (409)
+# 7. Conflicts: a CONFIRMED order can be neither replaced nor deleted (409)
 ###############################################################################################
 
-### Replace a paid order (409 problem detail with orderStatus)
+### Replace a confirmed order (409 problem detail with orderStatus)
 # expect: 409
 PUT {{host}}/api/orders/{{createToPay.response.body.$.id}}
 Content-Type: {{json}}
 
 { "customerId": "c1", "lines": [ { "sku": "A", "quantity": 1, "unitPrice": 1 } ] }
 
-### Delete a paid order (409)
+### Delete a confirmed order (409)
 # expect: 409
 DELETE {{host}}/api/orders/{{createToPay.response.body.$.id}}
 
-### List of paid orders (only version 2 can filter by status)
+### List of confirmed orders (only version 2 can filter by status)
 # expect: 200
-GET {{host}}/api/orders?status=PAID
+GET {{host}}/api/orders?status=CONFIRMED
 
 ###############################################################################################
 # 8. Delete orders (DELETE, allowed while PENDING_PAYMENT or CANCELLED)
