@@ -1,3 +1,7 @@
 shopflow:
   payment-timeout: 60s
   cancel-after: 5m
+  payments:
+    # Local development only, so http/send-payment-webhook.ps1 works without extra setup.
+    # Never use this value anywhere else.
+    webhook-secret: dev-only-webhook-secret

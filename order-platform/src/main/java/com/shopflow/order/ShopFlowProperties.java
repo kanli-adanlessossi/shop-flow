@@ -17,5 +17,12 @@ import jakarta.validation.constraints.NotNull;
 public record ShopFlowProperties(
 		@NotNull Duration paymentTimeout,
 		@NotNull Duration cancelAfter,
-		@DefaultValue Map<String, Boolean> features) {
+		@DefaultValue Map<String, Boolean> features,
+		/*
+		 * How long the inbox remembers handled event ids. It must be longer than the time an old
+		 * event can still be redelivered, which is the topic's retention (Kafka's default is 7 days).
+		 */
+		@DefaultValue("14d") Duration processedEventsRetention,
+		/** How long rows already sent to Kafka stay in the outbox table (for debugging) before they are purged. */
+		@DefaultValue("7d") Duration outboxRetention) {
 }

@@ -18,6 +18,13 @@ import org.springframework.web.context.request.WebRequest;
 import org.springframework.web.servlet.mvc.method.annotation.ResponseEntityExceptionHandler;
 
 import com.shopflow.order.domain.InsufficientStockException;
+import com.shopflow.order.domain.LatePaymentException;
+import com.shopflow.order.domain.PaymentAmountMismatchException;
+import com.shopflow.order.payments.InvalidWebhookSignatureException;
+import com.shopflow.order.payments.WebhookNotConfiguredException;
+
+import io.micrometer.core.instrument.Counter;
+import io.micrometer.core.instrument.MeterRegistry;
 import com.shopflow.order.domain.InvalidSortException;
 import com.shopflow.order.domain.InventoryUnavailableException;
 import com.shopflow.order.domain.OrderNotFoundException;
@@ -40,11 +47,29 @@ public class ApiExceptionHandler extends ResponseEntityExceptionHandler {
 	private static final URI INVENTORY_UNAVAILABLE_TYPE =
 			URI.create("https://example.com/problems/inventory-unavailable");
 
+	/** Counter for payments that arrived after the order was cancelled; any increase needs a person. */
+	public static final String LATE_PAYMENTS = "shopflow.payments.late";
+
+	private static final URI WEBHOOK_SIGNATURE_TYPE =
+			URI.create("https://example.com/problems/webhook-signature-invalid");
+
+	private static final URI LATE_PAYMENT_TYPE =
+			URI.create("https://example.com/problems/late-payment");
+
+	private static final URI AMOUNT_MISMATCH_TYPE =
+			URI.create("https://example.com/problems/payment-amount-mismatch");
+
 	private static final URI ORDER_NOT_FOUND_TYPE =
 			URI.create("https://example.com/problems/order-not-found");
 
 	private static final URI ORDER_NOT_MODIFIABLE_TYPE =
 			URI.create("https://example.com/problems/order-not-modifiable");
+
+	private final MeterRegistry meters;
+
+	public ApiExceptionHandler(MeterRegistry meters) {
+		this.meters = meters;
+	}
 
 	/** Adds a per-field {@code errors} list to the standard 400 problem detail. */
 	@Override
@@ -92,6 +117,49 @@ public class ApiExceptionHandler extends ResponseEntityExceptionHandler {
 				"Stock could not be checked right now. Please try again later.");
 		problem.setType(INVENTORY_UNAVAILABLE_TYPE);
 		problem.setTitle("Inventory unavailable");
+		return problem;
+	}
+
+	/** The caller learns only that authentication failed; the reason goes to the log. */
+	@ExceptionHandler(InvalidWebhookSignatureException.class)
+	ProblemDetail handleInvalidWebhookSignature(InvalidWebhookSignatureException ex) {
+		LOGGER.warn("Rejected a payment webhook: {}", ex.getMessage());
+		ProblemDetail problem = ProblemDetail.forStatusAndDetail(HttpStatus.UNAUTHORIZED,
+				"The request could not be authenticated.");
+		problem.setType(WEBHOOK_SIGNATURE_TYPE);
+		problem.setTitle("Invalid webhook signature");
+		return problem;
+	}
+
+	@ExceptionHandler(WebhookNotConfiguredException.class)
+	ProblemDetail handleWebhookNotConfigured(WebhookNotConfiguredException ex) {
+		LOGGER.error("Rejected a payment webhook: {}", ex.getMessage());
+		ProblemDetail problem = ProblemDetail.forStatusAndDetail(HttpStatus.SERVICE_UNAVAILABLE,
+				"Webhooks are not enabled on this server.");
+		problem.setTitle("Webhook not configured");
+		return problem;
+	}
+
+	/** Money was taken for an order that no longer exists in a payable state: somebody has to refund it. */
+	@ExceptionHandler(LatePaymentException.class)
+	ProblemDetail handleLatePayment(LatePaymentException ex) {
+		LOGGER.error("LATE PAYMENT, refund needed: {}", ex.getMessage());
+		Counter.builder(LATE_PAYMENTS).description("Payments that arrived for an already cancelled order")
+				.register(this.meters).increment();
+		ProblemDetail problem = ProblemDetail.forStatusAndDetail(HttpStatus.CONFLICT, ex.getMessage());
+		problem.setType(LATE_PAYMENT_TYPE);
+		problem.setTitle("Order already cancelled");
+		problem.setProperty("orderId", ex.getOrderId());
+		return problem;
+	}
+
+	@ExceptionHandler(PaymentAmountMismatchException.class)
+	ProblemDetail handlePaymentAmountMismatch(PaymentAmountMismatchException ex) {
+		LOGGER.warn("Payment amount mismatch: {}", ex.getMessage());
+		ProblemDetail problem = ProblemDetail.forStatusAndDetail(HttpStatus.UNPROCESSABLE_ENTITY, ex.getMessage());
+		problem.setType(AMOUNT_MISMATCH_TYPE);
+		problem.setTitle("Payment amount does not match the order");
+		problem.setProperty("orderId", ex.getOrderId());
 		return problem;
 	}
 

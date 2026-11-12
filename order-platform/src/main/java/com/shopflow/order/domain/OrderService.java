@@ -1,5 +1,6 @@
 package com.shopflow.order.domain;
 
+import java.math.BigDecimal;
 import java.time.Instant;
 import java.util.List;
 import java.util.Objects;
@@ -18,6 +19,12 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.support.TransactionOperations;
 
+import com.shopflow.order.events.OrderCancelled;
+import com.shopflow.order.events.OrderConfirmed;
+import com.shopflow.order.events.OrderPlaced;
+import com.shopflow.order.events.OutboxEvents;
+import com.shopflow.order.events.ProcessedEvents;
+
 @Service
 public class OrderService {
 
@@ -31,12 +38,18 @@ public class OrderService {
 
 	private final ReservationRelease release;
 
+	private final OutboxEvents events;
+
+	private final ProcessedEvents processed;
+
 	public OrderService(OrderRepository orders, StockReservations stock, TransactionOperations tx,
-			ReservationRelease release) {
+			ReservationRelease release, OutboxEvents events, ProcessedEvents processed) {
 		this.orders = orders;
 		this.stock = stock;
 		this.tx = tx;
 		this.release = release;
+		this.events = events;
+		this.processed = processed;
 	}
 
 	/**
@@ -67,7 +80,10 @@ public class OrderService {
 			return Objects.requireNonNull(this.tx.execute(status -> {
 				Order order = new Order(draft.customerId(), draft.discountCode(), reservationId);
 				toLines(draft).forEach(order::addLine);
-				return OrderDetails.from(this.orders.save(order));
+				Order saved = this.orders.save(order);
+				// Same transaction as the order: the event exists if and only if the order does.
+				this.events.add(new OrderPlaced(Objects.requireNonNull(saved.getId()), saved.getCustomerId(), total(saved)));
+				return OrderDetails.from(saved);
 			}));
 		}
 		catch (RuntimeException ex) {
@@ -117,7 +133,11 @@ public class OrderService {
 	@Transactional
 	public OrderDetails updateStatus(long id, OrderStatus status) {
 		Order order = load(id);
+		OrderStatus before = order.getStatus();
 		order.setStatus(status);
+		if (status == OrderStatus.CANCELLED && before != OrderStatus.CANCELLED) {
+			this.events.add(new OrderCancelled(id, order.getCustomerId(), "cancelled on request"));
+		}
 		return OrderDetails.from(order);
 	}
 
@@ -164,8 +184,61 @@ public class OrderService {
 						&& order.getCreatedAt().isBefore(cutoff))
 				.map(order -> {
 					order.setStatus(OrderStatus.CANCELLED);
+					this.events.add(new OrderCancelled(id, order.getCustomerId(), "unpaid"));
 					return order.getCustomerId();
 				});
+	}
+
+	/** Names the payment provider's webhook in the inbox, so its event ids do not mix with other consumers'. */
+	static final String PAYMENT_WEBHOOK = "payment-webhook";
+
+	/**
+	 * The payment provider says an order was paid: confirms it.
+	 *
+	 * <p>Providers deliver webhooks at least once and not necessarily in order, so this is safe to call
+	 * again with the same input:
+	 * <ul>
+	 * <li>the provider's {@code eventId} is recorded in the inbox in the same transaction as the status
+	 * change, so a repeat is a {@link PaymentOutcome#DUPLICATE} that changes nothing;</li>
+	 * <li>an order that is already CONFIRMED (or shipped) stays as it is
+	 * ({@link PaymentOutcome#ALREADY_CONFIRMED});</li>
+	 * <li>a failure rolls the inbox row back with everything else, so the provider's retry is handled
+	 * again.</li>
+	 * </ul>
+	 *
+	 * @throws OrderNotFoundException there is no such order
+	 * @throws LatePaymentException the order was cancelled in the meantime; the customer has paid and needs a refund
+	 * @throws PaymentAmountMismatchException the amount paid is not the order's total
+	 */
+	@CacheEvict(cacheNames = CACHE, key = "#id")
+	@Transactional
+	public PaymentOutcome confirmPayment(long id, BigDecimal amountPaid, String providerEventId) {
+		Order order = load(id);
+		if (!this.processed.markProcessed(PAYMENT_WEBHOOK, providerEventId)) {
+			return PaymentOutcome.DUPLICATE;
+		}
+		switch (order.getStatus()) {
+			case CONFIRMED, SHIPPED:
+				return PaymentOutcome.ALREADY_CONFIRMED;
+			case CANCELLED:
+				throw new LatePaymentException(String.valueOf(id));
+			case PENDING_PAYMENT:
+				BigDecimal total = total(order);
+				if (total.compareTo(amountPaid) != 0) {
+					throw new PaymentAmountMismatchException(String.valueOf(id), total, amountPaid);
+				}
+				order.setStatus(OrderStatus.CONFIRMED);
+				this.events.add(new OrderConfirmed(id, order.getCustomerId(), total));
+				return PaymentOutcome.CONFIRMED;
+			default:
+				throw new IllegalStateException("Unhandled status " + order.getStatus());
+		}
+	}
+
+	private static BigDecimal total(Order order) {
+		return order.getLines().stream()
+				.map(line -> line.getUnitPrice().multiply(BigDecimal.valueOf(line.getQuantity())))
+				.reduce(BigDecimal.ZERO, BigDecimal::add);
 	}
 
 	private Order load(long id) {
