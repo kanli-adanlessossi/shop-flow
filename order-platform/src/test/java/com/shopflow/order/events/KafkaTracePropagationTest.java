@@ -20,14 +20,13 @@ import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.context.TestConfiguration;
-import org.springframework.boot.testcontainers.service.connection.ServiceConnection;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Import;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.transaction.support.TransactionOperations;
-import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
-import org.testcontainers.kafka.KafkaContainer;
+
+import com.shopflow.order.TestcontainersConfiguration;
 
 import io.micrometer.tracing.Tracer;
 import io.opentelemetry.api.trace.SpanKind;
@@ -42,9 +41,9 @@ import io.opentelemetry.sdk.trace.export.SimpleSpanProcessor;
  * send (producer) and the receive (consumer) must be in ONE trace, the receive must be the child of
  * the send, and the handler code must run inside that same trace.
  *
- * <p>Needs Docker (skipped without it). The Kafka container is started once and its address is handed to Spring Boot by
- * {@code @ServiceConnection}, so {@code spring.kafka.bootstrap-servers} from application.yaml is
- * replaced.
+ * <p>Needs Docker (skipped without it). Kafka and PostgreSQL come from the shared
+ * {@link TestcontainersConfiguration}, so the outbox, the relay and the inbox run on the same
+ * database and broker as in production.
  */
 @Testcontainers(disabledWithoutDocker = true)
 @SpringBootTest(properties = {
@@ -52,12 +51,8 @@ import io.opentelemetry.sdk.trace.export.SimpleSpanProcessor;
 		"management.tracing.sampling.probability=1.0",
 		// The default relay delay is already 1 s; the first poll after the group joined is enough.
 		"shopflow.outbox-relay-delay=200ms" })
-@Import(KafkaTracePropagationTest.SpanCapture.class)
+@Import({ TestcontainersConfiguration.class, KafkaTracePropagationTest.SpanCapture.class })
 class KafkaTracePropagationTest {
-
-	@Container
-	@ServiceConnection
-	static final KafkaContainer KAFKA = new KafkaContainer("apache/kafka:4.3.2");
 
 	static final InMemorySpanExporter SPANS = InMemorySpanExporter.create();
 

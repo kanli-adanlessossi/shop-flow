@@ -1,0 +1,95 @@
+# Builds and tests every module on every push, as one Maven reactor from the parent pom: compile
+# (with Error Prone / NullAway), all unit, slice and integration tests, and packaging. The
+# Testcontainers-based tests (PostgreSQL, Kafka, Keycloak, WireMock) run against the runner's own
+# Docker; nothing else needs to be installed.
+name: CI
+
+on:
+  push:
+  # Lets you re-run the build for a branch from the Actions tab without a new commit.
+  workflow_dispatch:
+
+# Read-only token: the build only needs to check out the code.
+permissions:
+  contents: read
+
+# A newer push to the same branch makes the older, now outdated, run pointless.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Build and test
+    runs-on: ubuntu-latest
+    # The full build takes about 3 minutes locally (Keycloak starts twice); leave room for image pulls.
+    timeout-minutes: 30
+
+    steps:
+      # First step, so the duration check at the end covers everything the job does.
+      - name: Start the clock
+        run: echo "CI_STARTED_AT=$(date +%s)" >> "$GITHUB_ENV"
+
+      # Actions are pinned to full commit SHAs (a tag can be moved); the comment says which release.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Set up Java 25
+        uses: actions/setup-java@77dd5b2ce225ea11469928ac317850245a74ae78 # v6.2.0
+        with:
+          distribution: temurin
+          java-version: '25'
+          # Caches ~/.m2/repository, keyed on every pom.xml in the reactor.
+          cache: maven
+          cache-dependency-path: '**/pom.xml'
+
+      - name: Build and test
+        # The parent pom builds every module in dependency order. -B: no interactive output;
+        # -ntp: no download progress lines in the log. .mvn/jvm.config (JDK flags for Error Prone)
+        # is picked up because the build starts in the top-level project.
+        run: ./mvnw -B -ntp verify
+
+      - name: Upload test reports
+        # Also on failure: that is when the reports are needed.
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: test-reports
+          path: '*/target/surefire-reports/'
+          if-no-files-found: ignore
+          retention-days: 14
+
+      # Non-functional target: CI finishes in under 10 minutes. Every run writes its duration to the
+      # run summary; above WARN_AFTER it adds a warning, at FAIL_AFTER or more the job fails, so a slow
+      # creep shows up long before the target is missed. Measured from the first step to this one:
+      # waiting for a runner and the post-job steps (e.g. saving the Maven cache) are not included.
+      # The 30-minute timeout above stays as the safety stop for a hung build.
+      - name: Check duration target
+        if: ${{ !cancelled() }}
+        env:
+          WARN_AFTER_SECONDS: 480
+          FAIL_AFTER_SECONDS: 600
+        run: |
+          elapsed=$(( $(date +%s) - CI_STARTED_AT ))
+          took="$(( elapsed / 60 ))m $(( elapsed % 60 ))s"
+          limit="$(( FAIL_AFTER_SECONDS / 60 ))m"
+          if (( elapsed >= FAIL_AFTER_SECONDS )); then
+            verdict="missed: not under ${limit}"
+          elif (( elapsed > WARN_AFTER_SECONDS )); then
+            verdict="close: over $(( WARN_AFTER_SECONDS / 60 ))m"
+          else
+            verdict="met"
+          fi
+          {
+            echo "### CI duration"
+            echo ""
+            echo "| Took | Target | Result |"
+            echo "| --- | --- | --- |"
+            echo "| ${took} | under ${limit} | ${verdict} |"
+          } >> "$GITHUB_STEP_SUMMARY"
+          if (( elapsed >= FAIL_AFTER_SECONDS )); then
+            echo "::error title=CI duration target missed::The build took ${took}; the target is under ${limit}."
+            exit 1
+          elif (( elapsed > WARN_AFTER_SECONDS )); then
+            echo "::warning title=CI duration close to the target::The build took ${took}; the target is under ${limit}."
+          fi
+          echo "CI took ${took} (target: under ${limit})"

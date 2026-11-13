@@ -22,8 +22,8 @@ import com.shopflow.order.domain.DailySales;
 import com.shopflow.order.infra.DailySalesQuery;
 
 /**
- * Sales reports, meant for administrators. Everything is under {@code /api/admin} so access
- * can later be restricted with a single rule. There is no authentication yet.
+ * Sales reports, for administrators only. Everything is under {@code /api/admin}, which
+ * {@code SecurityConfig} restricts to the ADMIN role with a single rule.
  */
 @RestController
 @RequestMapping("/api/admin/reports")
