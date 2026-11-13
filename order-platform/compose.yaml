@@ -14,6 +14,31 @@ services:
       timeout: 3s
       retries: 15
 
+  keycloak:
+    # Identity provider for local development only (start-dev: H2 database inside the container,
+    # plain HTTP, no persistence between `down`s). Imports the "shopflow" realm on first start:
+    # roles customer and admin, users alice (customer) and bob (admin), public client shopflow-web.
+    image: quay.io/keycloak/keycloak:26.8.1
+    command: ["start-dev", "--import-realm"]
+    ports:
+      # Fixed host port: 8080 is the app, 8081 inventory-service.
+      - "8180:8080"
+    environment:
+      # Admin console login at http://localhost:8180 (dev only).
+      KC_BOOTSTRAP_ADMIN_USERNAME: admin
+      KC_BOOTSTRAP_ADMIN_PASSWORD: admin
+      # Serves /health/ready on the management port 9000 inside the container.
+      KC_HEALTH_ENABLED: "true"
+    volumes:
+      - ./keycloak/shopflow-realm.json:/opt/keycloak/data/import/shopflow-realm.json:ro
+    healthcheck:
+      # The image has no curl; talk HTTP through bash's /dev/tcp.
+      test: ["CMD-SHELL", "exec 3<>/dev/tcp/localhost/9000; echo -e 'GET /health/ready HTTP/1.1\\r\\nHost: localhost\\r\\nConnection: close\\r\\n\\r\\n' >&3; timeout --preserve-status 1 cat <&3 | grep -m 1 status | grep -m 1 UP; ERROR=$$?; exec 3<&-; exec 3>&-; exit $$ERROR"]
+      interval: 5s
+      timeout: 10s
+      retries: 30
+      start_period: 20s
+
   kafka:
     # Single node in KRaft mode: one process is both broker and controller, no ZooKeeper.
     image: apache/kafka:4.3.2

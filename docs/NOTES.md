@@ -7,6 +7,7 @@ Findings from working on this module, with the examples and numbers behind them.
 - [Virtual threads: when they help and when they don't](#virtual-threads-when-they-help-and-when-they-dont)
 - [Kafka consumer groups and share groups](#kafka-consumer-groups-and-share-groups)
 - [Delivery guarantees: at-least-once vs. exactly-once](#delivery-guarantees-at-least-once-vs-exactly-once)
+- [Security: roles, token flow and ownership rules](#security-roles-token-flow-and-ownership-rules)
 
 Versions: Spring Boot 4.1.2, Spring Framework 7.0.10, Jackson 3.1.7, Hibernate 7.4.13, Java 25.
 
@@ -420,3 +421,181 @@ Verified earlier with real brokers on H2 and PostgreSQL: one event delivered thr
 once; a send that fails once is retried and leaves one inbox row; an event that exhausts its retries
 leaves one `dead_letters` row and no inbox row. The late-ack and crash-between-send-and-mark cases
 above follow from the code and are not covered by a test.
+
+---
+
+## Security: roles, token flow and ownership rules
+
+order-platform is an OAuth 2.0 **resource server**: it never signs anyone in. Keycloak (realm
+`shopflow`) issues JWT access tokens, the API checks them on every request, and two kinds of rule
+decide what the caller may do: **roles** and **ownership**. There are no sessions and no cookies.
+
+Code: `infra/SecurityConfig` (URL rules), `api/OrderController` (`@PreAuthorize` per endpoint),
+`api/OrderAccess` (the ownership check), `spring.security.oauth2.resourceserver.jwt.*` in
+`application.yaml` (token checks and claim mapping), `keycloak/shopflow-realm.json` (roles, users,
+clients).
+
+### Who exists
+
+| Keycloak user / client | How it signs in | Realm role | What it is |
+|---|---|---|---|
+| `alice` / `alice-pass` | password grant via `shopflow-web` | `customer` | a shopper |
+| `bob` / `bob-pass` | password grant via `shopflow-web` | `admin` | staff |
+| client `shopflow-service` (secret `shopflow-service-secret`) | client credentials | `admin` (on its service account `service-account-shopflow-service`) | another service, no human |
+
+`shopflow-web` is a public client (no secret) with the password grant for tools and tests and the
+authorization-code flow with PKCE for a browser front end. `shopflow-service` is confidential and
+can only use client credentials. All credentials are for local development; the realm file is
+imported by compose.yaml and by the Keycloak test container, so both use the same one.
+
+### Roles
+
+| Role (Keycloak) | Authority (Spring) | What it allows |
+|---|---|---|
+| `admin` | `ROLE_ADMIN` | everything: all orders, cancelling, `/api/admin/**` (the sales report) |
+| `customer` | `ROLE_CUSTOMER` | nothing more than being signed in (see below) |
+
+**No rule checks `ROLE_CUSTOMER`.** Every rule is either `hasRole('ADMIN')` or an ownership
+check, so any valid token from the realm, even one without a role, gets customer-level access:
+its own orders only. `OrderControllerTest` pins this down with a user "carol" who has no role. If
+"customer" is ever meant to be a real gate (for example to keep staff-only accounts out of the
+shop), the rules have to start requiring it.
+
+How a Keycloak role becomes an authority (`application.yaml`):
+
+```yaml
+spring.security.oauth2.resourceserver.jwt:
+  authorities-claim-expressions:
+    - "[realm_access][roles].![toUpperCase()]"   # realm roles are nested; upper-cased
+  authority-prefix: ROLE_                        # hasRole('ADMIN') looks for ROLE_ADMIN
+  principal-claim-name: preferred_username       # authentication.name = "alice", not the UUID in sub
+```
+
+- Keycloak writes realm roles into the nested claim `realm_access.roles`; Spring's default
+  converter only reads `scope`/`scp`, so without the expression no role would arrive.
+- The roles are lower case in Keycloak and `hasRole` compares case-sensitively, hence
+  `toUpperCase()`. Write rules as `hasRole('ADMIN')`; `hasRole('admin')` never matches.
+- Spring Security 7 also adds a `FACTOR_BEARER` authority to every bearer-token login (the factor
+  marker of its multi-factor model). Nothing uses it yet.
+
+### Token flow
+
+```mermaid
+sequenceDiagram
+    participant C as Client (alice, bob, a service)
+    participant K as Keycloak (realm shopflow)
+    participant A as order-platform
+    C->>K: POST /realms/shopflow/protocol/openid-connect/token (password or client_credentials)
+    K-->>C: access_token (JWT, 5 min)
+    C->>A: GET /api/orders/7  Authorization: Bearer <JWT>
+    Note over A: first token only: fetch discovery document and signing keys (JWKS), cached
+    A->>A: check signature, expiry, issuer = http://localhost:8180/realms/shopflow
+    A->>A: map claims: name = preferred_username, roles = realm_access.roles -> ROLE_*
+    A->>A: URL rule, then @PreAuthorize (role / ownership)
+    A-->>C: 200, or 401 (no/bad token), or 403 (valid token, not allowed)
+```
+
+1. **Getting a token.** A user signs in with the password grant (`grant_type=password`,
+   `client_id=shopflow-web`), a service with client credentials (`client_id=shopflow-service` plus
+   its secret). A browser front end would use the authorization-code flow with PKCE against
+   `shopflow-web` instead; that is configured in the realm but not used or tested yet. Access tokens
+   live 5 minutes (Keycloak's default); the tools in this repo fetch a fresh one rather than refresh.
+2. **Sending it.** `Authorization: Bearer <token>` on every call. Nothing else is accepted: no
+   cookies, no query parameter.
+3. **Checking it.** Boot reads the issuer's discovery document and keys on the **first request that
+   carries a token**, not at startup, so the app starts without Keycloak and rejects tokens until it
+   is reachable. Then for each token: signature against the realm's keys, `exp`, and `iss` equal to
+   `spring.security.oauth2.resourceserver.jwt.issuer-uri`. **The audience (`aud`) is not checked**
+   (`audiences` is not set), so a valid token issued to any client of the realm is accepted.
+4. **The issuer must match exactly.** Keycloak writes the address the caller used into `iss`. A
+   token fetched via `http://host.docker.internal:8180` is rejected by an app that expects
+   `http://localhost:8180/realms/shopflow`. That is why the load test fetches its token on the host
+   and passes it into the k6 container, and why the local runner (`TestOrderPlatformApplication`)
+   binds Keycloak to the fixed port 8180.
+5. **Answers.** No token or an invalid one: **401** with
+   `WWW-Authenticate: Bearer ...` (`error="invalid_token"` for a bad one, and since Spring Security 7
+   a `resource_metadata` link to `/.well-known/oauth-protected-resource`, RFC 9728). A valid token
+   that a rule refuses: **403**.
+
+### What needs no token
+
+| Path | Why | Protected by |
+|---|---|---|
+| `GET /actuator/health/**` | load balancers and probes | nothing; details are hidden |
+| `POST /api/webhooks/payments` | the payment provider cannot get a Keycloak token | its HMAC signature (401 without a valid one, 503 while no secret is set) |
+| `/.well-known/oauth-protected-resource` | published by Spring Security 7 itself, cannot be switched off in 7.1 | nothing; static facts only, public by design |
+
+Everything else, including the other actuator endpoints, `/api/health-info` and unknown paths,
+needs a token. `AnonymousAccessTest` calls every mapped endpoint without one and fails if anything
+outside this table answers.
+
+### Ownership rules
+
+An order belongs to the user whose **name** (`preferred_username`) equals the order's
+`customerId`. So `customerId` holds the Keycloak username (`alice`), and the rules compare it with
+`authentication.name`. The check is `@orderAccess.isOwner(#id, authentication)` (`OrderAccess`),
+which reads the order through `OrderService.findById` and therefore normally hits the order cache.
+
+| Endpoint | Customer (any signed-in user) | Admin |
+|---|---|---|
+| `POST /api/orders` | only with `customerId` = own name | for anyone |
+| `GET /api/orders/{id}` | own orders | all |
+| `PUT /api/orders/{id}` | own orders, and `customerId` must stay the own name | all |
+| `PATCH /api/orders/{id}/status` | own orders, any status **except** `CANCELLED` | all, including cancelling |
+| `DELETE /api/orders/{id}` | own orders | all |
+| `GET /api/orders` (list) | **all orders** (not restricted yet) | all |
+| `GET /api/admin/reports/daily-sales` | 403 | yes |
+| `GET /api/health-info` | yes | yes |
+
+The rules themselves (status checks such as "only while `PENDING_PAYMENT`" are separate, in the
+domain, and answer 409):
+
+```java
+ADMIN              = "hasRole('ADMIN')"
+OWNER              = "@orderAccess.isOwner(#id, authentication)"
+CUSTOMER_IS_CALLER = "#request.customerId() == authentication.name"
+NOT_A_CANCEL       = "#request.status() != T(...OrderStatus).CANCELLED"
+
+create  = ADMIN or CUSTOMER_IS_CALLER
+read    = ADMIN or OWNER                (also delete)
+replace = ADMIN or (OWNER and CUSTOMER_IS_CALLER)
+status  = ADMIN or (OWNER and NOT_A_CANCEL)
+```
+
+Details that matter:
+
+- **Missing order: 404, not 403.** `isOwner` answers true for an order that does not exist, so the
+  request goes on and gets its normal 404; there is nothing to protect. The flip side: for an
+  existing order of someone else a customer gets 403, so the difference tells whether an id exists.
+  Order ids are sequential anyway.
+- **Order of checks.** Bean Validation runs first, so a malformed body is 400 even for someone who
+  would be refused; then `@PreAuthorize` (403); then the domain rules (404, 409, 422).
+- **The rules sit on the controller, not on `OrderService`.** The scheduled clean-up of unpaid
+  orders (`UnpaidOrderCleanup`) and the payment webhook change orders without a signed-in user;
+  `@PreAuthorize` on the service would refuse them.
+- **The list is not filtered by owner** (open criterion of US-3 in `docs/user-stories.md`, with a
+  disabled test). `@PreAuthorize` with `#id` cannot cover a list; it needs a `customerId` condition
+  in the two list queries.
+- **`customerId` is the Keycloak username**, so renaming a user in Keycloak would cut them off from
+  their orders. The stable alternative is the subject (`sub`, a UUID), which would need a
+  migration of existing orders and of every client that sends `customerId`.
+
+### Where it is tested
+
+| Test | Covers | Token source |
+|---|---|---|
+| `OrderControllerTest`, `SalesReportControllerTest` | every rule above, per endpoint, plus the claim mapping (converter) | `jwt()` post-processor, authorities from the app's own converter |
+| `OrderApiIntegrationTest` | the whole filter chain with real claim mapping | mocked `JwtDecoder` returning Keycloak-shaped tokens |
+| `KeycloakSecurityIntegrationTest` | real tokens: accepted, tampered signature, edited claims, other realm, wrong password | Keycloak container, real realm |
+| `AnonymousAccessTest` | nothing but the table above answers without a token | none |
+| `Us11SignInAndAccessStoryTest` | the acceptance view (US-11), incl. CORS | Keycloak container |
+
+### Open points
+
+- **No audience check.** Setting `spring.security.oauth2.resourceserver.jwt.audiences` (and an
+  audience mapper in Keycloak) would limit the API to tokens meant for it.
+- **`customer` is not enforced**, see Roles.
+- **The list endpoints show every customer's orders.**
+- **Multi-factor sign-in** belongs in Keycloak (for example OTP for admins); the API could then
+  require it by checking `acr`/`amr` claims on admin paths. Not set up; see the Spring Security 7
+  MFA and passkey features, which are built for apps with their own login, not resource servers.

@@ -10,6 +10,19 @@
 //   RATE         orders started per second             [200]
 //   DURATION     how long to keep that rate            [2m]
 //   API_VERSION  value of the X-API-Version header     [2]
+//   ACCESS_TOKEN a ready JWT to send as Bearer token     [fetched from Keycloak in setup()]
+//   KEYCLOAK_URL where to fetch it (password grant)       [http://localhost:8180]
+//   LOAD_USER / LOAD_PASSWORD  Keycloak user to sign in as [alice / alice-pass]. Orders are placed in
+//                the name of LOAD_USER: a customer may only create orders for themselves.
+//
+// Every API call needs a token. Keycloak puts the address the caller used into the token's
+// issuer, and order-platform only accepts tokens issued for http://localhost:8180/realms/shopflow.
+// So when k6 runs in Docker, do NOT point KEYCLOAK_URL at host.docker.internal: fetch the token on
+// the host and pass it in (compare-virtual-threads.ps1 does this):
+//   $tok = (Invoke-RestMethod -Method Post http://localhost:8180/realms/shopflow/protocol/openid-connect/token `
+//     -Body @{grant_type='password';client_id='shopflow-web';username='alice';password='alice-pass'}).access_token
+//   docker run --rm -i -e BASE_URL=... -e ACCESS_TOKEN=$tok grafana/k6 run - < load-tests/place-orders.js
+// A Keycloak access token lives 5 minutes by default, so one token covers runs up to about that long.
 //
 // The test needs order-platform and the services behind it running: its database, and
 // inventory-service on :8081 (or the WireMock stand-in, see deploy/wiremock/README.md).
@@ -23,6 +36,9 @@ const BASE_URL = __ENV.BASE_URL || 'http://localhost:8080';
 const RATE = parseInt(__ENV.RATE || '200', 10);
 const DURATION = __ENV.DURATION || '2m';
 const API_VERSION = __ENV.API_VERSION || '2';
+const KEYCLOAK_URL = __ENV.KEYCLOAK_URL || 'http://localhost:8180';
+const LOAD_USER = __ENV.LOAD_USER || 'alice';
+const LOAD_PASSWORD = __ENV.LOAD_PASSWORD || 'alice-pass';
 
 // Outcomes the API documents for POST /api/orders, counted separately from "failures".
 const created = new Counter('orders_created');
@@ -77,7 +93,7 @@ function orderBody() {
       unitPrice: randomInt(100, 5000) / 100,
     });
   }
-  return JSON.stringify({ customerId: `load-${randomInt(1, 10000)}`, lines });
+  return JSON.stringify({ customerId: LOAD_USER, lines });
 }
 
 export function setup() {
@@ -85,12 +101,25 @@ export function setup() {
   if (health.status !== 200) {
     fail(`order-platform is not healthy at ${BASE_URL} (GET /actuator/health answered ${health.status})`);
   }
+  if (__ENV.ACCESS_TOKEN) {
+    return { token: __ENV.ACCESS_TOKEN };
+  }
+  const login = http.post(
+    `/realms/shopflow/protocol/openid-connect/token`,
+    { grant_type: 'password', client_id: 'shopflow-web', username: LOAD_USER, password: LOAD_PASSWORD },
+    { tags: { name: 'POST token' } },
+  );
+  if (login.status !== 200) {
+    fail(`could not sign in as ${LOAD_USER} at ${KEYCLOAK_URL} (answered ${login.status})`);
+  }
+  return { token: login.json('access_token') };
 }
 
-export default function () {
+export default function (auth) {
   const res = http.post(`${BASE_URL}/api/orders`, orderBody(), {
     headers: {
       'Content-Type': 'application/json',
+      Authorization: `Bearer ${auth.token}`,
       'X-API-Version': API_VERSION,
       'X-Correlation-Id': correlationId(),
     },

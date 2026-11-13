@@ -3,15 +3,14 @@
 	xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
 	<modelVersion>4.0.0</modelVersion>
 	<parent>
-		<groupId>org.springframework.boot</groupId>
-		<artifactId>spring-boot-starter-parent</artifactId>
-		<version>4.1.2</version>
-		<relativePath/> <!-- lookup parent from repository -->
+		<groupId>com.shopflow</groupId>
+		<artifactId>shop-flow</artifactId>
+		<version>0.0.1-SNAPSHOT</version>
+		<relativePath>../pom.xml</relativePath>
 	</parent>
-	<groupId>com.shopflow</groupId>
+	<!-- groupId, version and java.version come from the parent -->
 	<artifactId>order-platform</artifactId>
-	<version>0.0.1-SNAPSHOT</version>
-	<name/>
+	<name>order-platform</name>
 	<description/>
 	<url/>
 	<licenses>
@@ -27,15 +26,24 @@
 		<url/>
 	</scm>
 	<properties>
-		<java.version>25</java.version>
 		<errorprone.version>2.52.0</errorprone.version>
 		<nullaway.version>0.14.3</nullaway.version>
 		<shedlock.version>7.11.0</shedlock.version>
+		<!-- Not in the Spring Boot BOM. 4.4.x is built for Testcontainers 2.0.5 and Keycloak 26.8. -->
+		<testcontainers-keycloak.version>4.4.0</testcontainers-keycloak.version>
 	</properties>
 	<dependencies>
 		<dependency>
 			<groupId>org.springframework.boot</groupId>
 			<artifactId>spring-boot-starter-actuator</artifactId>
+		</dependency>
+		<dependency>
+			<groupId>org.springframework.boot</groupId>
+			<artifactId>spring-boot-starter-security</artifactId>
+		</dependency>
+		<dependency>
+			<groupId>org.springframework.boot</groupId>
+			<artifactId>spring-boot-starter-security-oauth2-resource-server</artifactId>
 		</dependency>
 		<dependency>
 			<groupId>org.springframework.boot</groupId>
@@ -155,6 +163,30 @@
 			<artifactId>testcontainers-kafka</artifactId>
 			<scope>test</scope>
 		</dependency>
+		<dependency>
+			<groupId>org.testcontainers</groupId>
+			<artifactId>testcontainers-postgresql</artifactId>
+			<scope>test</scope>
+		</dependency>
+		<!-- Real Keycloak for the security integration tests (community module, dasniko). -->
+		<dependency>
+			<groupId>com.github.dasniko</groupId>
+			<artifactId>testcontainers-keycloak</artifactId>
+			<version>${testcontainers-keycloak.version}</version>
+			<scope>test</scope>
+		</dependency>
+		<!-- @DataJpaTest for the repository queries. -->
+		<dependency>
+			<groupId>org.springframework.boot</groupId>
+			<artifactId>spring-boot-starter-data-jpa-test</artifactId>
+			<scope>test</scope>
+		</dependency>
+		<!-- jwt() request post-processor: calls with a ready-made token in controller tests. -->
+		<dependency>
+			<groupId>org.springframework.security</groupId>
+			<artifactId>spring-security-test</artifactId>
+			<scope>test</scope>
+		</dependency>
 		<!-- Keeps finished spans in memory so the test can inspect them. -->
 		<dependency>
 			<groupId>io.opentelemetry</groupId>
@@ -164,6 +196,23 @@
 	</dependencies>
 
 	<build>
+		<testResources>
+			<testResource>
+				<directory>src/test/resources</directory>
+			</testResource>
+			<!-- The realm compose.yaml imports, so the Keycloak tests run against the very same file. -->
+			<testResource>
+				<directory>keycloak</directory>
+				<includes>
+					<include>shopflow-realm.json</include>
+				</includes>
+			</testResource>
+			<!-- The inventory-service stand-in stubs used locally, for the WireMock test container. -->
+			<testResource>
+				<directory>../deploy/wiremock/inventory</directory>
+				<targetPath>wiremock/inventory</targetPath>
+			</testResource>
+		</testResources>
 		<plugins>
 			<plugin>
 				<groupId>org.apache.maven.plugins</groupId>

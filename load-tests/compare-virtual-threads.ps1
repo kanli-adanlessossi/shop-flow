@@ -8,6 +8,8 @@
   of threads serve requests, runs a short unrecorded warm-up, then the measured run. k6 runs in
   Docker. WireMock stands in for inventory-service on :8081 (answering normally).
 
+  The app needs the Keycloak container from compose.yaml (started with it); k6 signs in as alice.
+
   Summaries are written to load-tests/results/<tag>.json. Needs Docker, and Java and Maven wrapper
   as for a normal local start. Takes about 4 minutes per run.
 
@@ -40,10 +42,19 @@ function Stop-App {
   Start-Sleep -Seconds 3
 }
 
+# Every API call needs a Keycloak token. It is fetched here, on the host, as http://localhost:8180
+# because Keycloak writes the address the caller used into the token and order-platform only accepts
+# tokens issued for that address (k6 in Docker would have to use host.docker.internal). A token lives
+# 5 minutes, so each k6 run gets a fresh one.
+function Get-AccessToken {
+  (Invoke-RestMethod -Method Post -Uri 'http://localhost:8180/realms/shopflow/protocol/openid-connect/token' `
+    -Body @{ grant_type = 'password'; client_id = 'shopflow-web'; username = 'alice'; password = 'alice-pass' }).access_token
+}
+
 function Invoke-K6($tag, $rate, $duration, $export) {
   $k6 = @('run', '--quiet')
   if ($export) { $k6 += "--summary-export=/results/$tag.json" }
-  $null = & docker run --rm -e "BASE_URL=http://host.docker.internal:8080" -e "RATE=$rate" -e "DURATION=$duration" `
+  $null = & docker run --rm -e "BASE_URL=http://host.docker.internal:8080" -e "RATE=$rate" -e "DURATION=$duration" -e "ACCESS_TOKEN=$(Get-AccessToken)" `
     -v "$PSScriptRoot`:/scripts:ro" -v "$results`:/results" grafana/k6 @k6 /scripts/place-orders.js 2>&1
   # k6 exits non-zero when a threshold is crossed; that is a result, not a failure of this script.
 }
@@ -63,7 +74,8 @@ foreach ($mode in $Modes) {
   Push-Location $app
   docker compose down -v 2>&1 | Out-Null
   $log = Join-Path $results "$tag-app.log"
-  $proc = Start-Process -FilePath "$app\mvnw.cmd" -WorkingDirectory $app -WindowStyle Hidden -PassThru `
+  # The one Maven wrapper is in the repo root; started in order-platform/ it builds just that module.
+  $proc = Start-Process -FilePath "$root\mvnw.cmd" -WorkingDirectory $app -WindowStyle Hidden -PassThru `
     -ArgumentList @('spring-boot:run', "-Dspring-boot.run.arguments=--spring.threads.virtual.enabled=$flag") `
     -RedirectStandardOutput $log -RedirectStandardError "$log.err"
   Pop-Location
