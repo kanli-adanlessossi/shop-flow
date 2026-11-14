@@ -1,6 +1,6 @@
 # Builds and tests every module on every push, as one Maven reactor from the parent pom: compile
-# (Error Prone and NullAway are configured in order-platform only; the two skeleton modules compile
-# without them), all unit, slice and integration tests, and packaging. The
+# (Error Prone and NullAway are configured in order-platform and inventory-service; shopflow-starter is
+# still a skeleton and compiles without them), all unit, slice and integration tests, and packaging. The
 # Testcontainers-based tests (PostgreSQL, Kafka, Keycloak, WireMock) run against the runner's own
 # Docker; nothing else needs to be installed.
 name: CI
@@ -23,7 +23,7 @@ jobs:
   build:
     name: Build and test
     runs-on: ubuntu-latest
-    # The full build took 2:26 to 3:19 minutes in the recorded local runs (Keycloak starts twice); leave
+    # The full build took 2:26 to 3:19 minutes in the recorded local runs (one shared Keycloak Spring context per module); leave
     # room for image pulls on a cold runner.
     timeout-minutes: 30
 

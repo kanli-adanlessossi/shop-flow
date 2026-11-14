@@ -8,7 +8,8 @@
   "roles": {
     "realm": [
       { "name": "customer", "description": "Places and views their own orders" },
-      { "name": "admin", "description": "Manages all orders and reads reports" }
+      { "name": "admin", "description": "Manages all orders and reads reports" },
+      { "name": "inventory", "description": "Reads and changes stock" }
     ]
   },
   "clients": [
@@ -40,7 +41,7 @@
       "username": "service-account-shopflow-service",
       "enabled": true,
       "serviceAccountClientId": "shopflow-service",
-      "realmRoles": [ "admin" ]
+      "realmRoles": [ "admin", "inventory" ]
     },
     {
       "username": "alice",

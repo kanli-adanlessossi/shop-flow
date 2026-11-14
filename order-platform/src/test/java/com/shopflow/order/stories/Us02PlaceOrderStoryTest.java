@@ -45,6 +45,15 @@ class Us02PlaceOrderStoryTest extends StoryTestSupport {
 	}
 
 	@Test
+	@DisplayName("every request to inventory carries a client-credentials Bearer token")
+	void inventoryIsCalledWithAToken() {
+		this.inventory.reset();
+		placeAlicesOrder();
+		assertThat(this.inventory.allRequests()).isPositive();
+		assertThat(this.inventory.requestsWithBearerToken()).isEqualTo(this.inventory.allRequests());
+	}
+
+	@Test
 	@DisplayName("an order.placed event tells the customer")
 	void theCustomerIsTold() {
 		long id = idOf(placeAlicesOrder());

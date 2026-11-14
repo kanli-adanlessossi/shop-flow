@@ -8,7 +8,7 @@ import com.fasterxml.jackson.annotation.JsonTypeName;
  * {@code @JsonTypeName}, which is the {@code type} written next to the payload in the JSON; the
  * mapping back from a type name to a class is in {@link EventEnvelope}.
  */
-public sealed interface Payload permits OrderPlaced, OrderConfirmed, OrderCancelled, UnknownPayload {
+public sealed interface Payload permits OrderPlaced, OrderConfirmed, OrderShipped, OrderCancelled, UnknownPayload {
 
 	/** The event type name, for example {@code order.placed}. */
 	@JsonIgnore

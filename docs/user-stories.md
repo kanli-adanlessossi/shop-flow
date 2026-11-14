@@ -35,9 +35,9 @@ As a customer, I want to place an order, so that the goods are reserved for me.
 - Prices come from the shop's price list (table `sku_prices`), never from the request: a `unitPrice`
   in the body is ignored. A SKU without a price is 422, and nothing is reserved. The price is copied
   into the order line, so a later price change does not alter existing orders.
-- The stock is reserved at inventory-service under a reservation id stored with the order. (The
-  contract is the one the WireMock stubs in `deploy/wiremock/inventory` define. The `inventory-service`
-  module in this repo is only a placeholder and does not implement it yet.)
+- The stock is reserved at inventory-service under a reservation id stored with the order. (The story
+  tests run against the WireMock stubs in `deploy/wiremock/inventory`; the real `inventory-service`
+  module answers the same contract, which its contract tests check.)
 - Not enough stock: 409 problem detail, no order is created.
 - Inventory unavailable: 503 problem detail after a short retry, no order is created, and a possibly
   made reservation is released.

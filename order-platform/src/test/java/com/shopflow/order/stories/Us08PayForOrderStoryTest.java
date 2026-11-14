@@ -5,12 +5,14 @@ import static org.assertj.core.api.Assertions.assertThat;
 import java.math.BigDecimal;
 import java.nio.charset.StandardCharsets;
 import java.time.Instant;
+import java.util.List;
 
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.http.MediaType;
 
 import com.shopflow.order.events.OrderConfirmed;
+import com.shopflow.order.events.OrderShipped;
 import com.shopflow.order.payments.WebhookSignature;
 
 @DisplayName("US-8 Pay for an order")
@@ -45,6 +47,37 @@ class Us08PayForOrderStoryTest extends StoryTestSupport {
 
 		awaitNotice(OrderConfirmed.class, id);
 		assertThat(noticesFor(id)).filteredOn(OrderConfirmed.class::isInstance).hasSize(1);
+	}
+
+	@Test
+	@DisplayName("order.confirmed carries the order's reservation id, for inventory")
+	void confirmedEventHasReservationId() {
+		long id = idOf(placeAlicesOrder());
+		pay(id, TOTAL).expectStatus().isOk();
+		assertThat(outboxPayloads(id, "order.confirmed")).singleElement()
+				.satisfies((json) -> assertThat(json).contains("\"reservationId\":\"" + reservationIdOf(id) + "\""));
+	}
+
+	@Test
+	@DisplayName("shipping a paid order writes one order.shipped event with the reservation id; again writes none")
+	void shippingPublishesOrderShipped() {
+		long id = idOf(placeAlicesOrder());
+		pay(id, TOTAL).expectStatus().isOk();
+		patchStatus(bob(), id, "SHIPPED").expectStatus().isOk();
+		patchStatus(bob(), id, "SHIPPED").expectStatus().isOk();
+		assertThat(statusOf(id)).isEqualTo("SHIPPED");
+		assertThat(outboxPayloads(id, "order.shipped")).singleElement().satisfies((json) -> {
+			assertThat(json).contains("\"orderId\":" + id);
+			assertThat(json).contains("\"reservationId\":\"" + reservationIdOf(id) + "\"");
+		});
+		// Not for customers: no notice about it.
+		assertThat(noticesFor(id)).noneMatch(OrderShipped.class::isInstance);
+	}
+
+	private List<String> outboxPayloads(long orderId, String type) {
+		return this.jdbc.sql("select payload from outbox_events where message_key = :key "
+				+ "and cast(payload as jsonb) ->> 'type' = :type")
+				.param("key", String.valueOf(orderId)).param("type", type).query(String.class).list();
 	}
 
 	@Test

@@ -27,6 +27,7 @@ import org.springframework.transaction.support.TransactionSynchronizationManager
 import com.shopflow.order.events.OrderCancelled;
 import com.shopflow.order.events.OrderConfirmed;
 import com.shopflow.order.events.OrderPlaced;
+import com.shopflow.order.events.OrderShipped;
 import com.shopflow.order.events.OutboxEvents;
 import com.shopflow.order.events.ProcessedEvents;
 
@@ -205,6 +206,7 @@ public class OrderService {
 	 * Changes the status and drops the cached copy so the next read sees it. Only PENDING_PAYMENT to
 	 * CANCELLED (which gives the reserved stock back) and CONFIRMED to SHIPPED are allowed; an order
 	 * becomes CONFIRMED only through {@link #confirmPayment}. Asking for the current status changes nothing.
+	 * Shipping also writes an {@code order.shipped} event (with the reservation id) for inventory-service.
 	 *
 	 * @throws IllegalStatusTransitionException any other change
 	 */
@@ -227,6 +229,9 @@ public class OrderService {
 			// admin acting for them cancels an unpaid order, so one reason fits. "unpaid" is the cleanup job's.
 			this.events.add(new OrderCancelled(id, order.getCustomerId(), "cancelled on request"));
 			releaseAfterCommit(order.getReservationId());
+		}
+		if (status == OrderStatus.SHIPPED) {
+			this.events.add(new OrderShipped(id, order.getReservationId()));
 		}
 		return OrderDetails.from(order);
 	}
@@ -330,7 +335,7 @@ public class OrderService {
 					throw new PaymentAmountMismatchException(String.valueOf(id), total, amountPaid);
 				}
 				order.setStatus(OrderStatus.CONFIRMED);
-				this.events.add(new OrderConfirmed(id, order.getCustomerId(), total));
+				this.events.add(new OrderConfirmed(id, order.getCustomerId(), total, order.getReservationId()));
 				return PaymentOutcome.CONFIRMED;
 			default:
 				throw new IllegalStateException("Unhandled status " + order.getStatus());

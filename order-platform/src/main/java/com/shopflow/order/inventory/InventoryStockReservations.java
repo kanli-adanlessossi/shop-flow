@@ -5,6 +5,7 @@ import java.util.List;
 import org.springframework.boot.http.client.FilteredHostException;
 import org.springframework.resilience.annotation.ConcurrencyLimit;
 import org.springframework.resilience.annotation.Retryable;
+import org.springframework.security.oauth2.core.OAuth2AuthorizationException;
 import org.springframework.stereotype.Component;
 import org.springframework.web.client.RestClientException;
 
@@ -57,6 +58,10 @@ class InventoryStockReservations implements StockReservations {
 			// underlying HTTP client this arrives bare, not wrapped in a RestClientException.
 			throw new InventoryUnavailableException("Inventory address is blocked by the outbound filter", ex);
 		}
+		catch (OAuth2AuthorizationException ex) {
+			// No token from Keycloak: inventory cannot be asked, which is the same as inventory being down.
+			throw new InventoryUnavailableException("No access token for inventory", ex);
+		}
 		catch (RestClientException ex) {
 			// Timeouts, refused connections and unreadable responses.
 			throw new InventoryUnavailableException("Inventory could not be reached", ex);
@@ -79,6 +84,9 @@ class InventoryStockReservations implements StockReservations {
 		}
 		catch (FilteredHostException ex) {
 			throw new InventoryUnavailableException("Inventory address is blocked by the outbound filter", ex);
+		}
+		catch (OAuth2AuthorizationException ex) {
+			throw new InventoryUnavailableException("No access token for inventory", ex);
 		}
 		catch (RestClientException ex) {
 			throw new InventoryUnavailableException("Inventory could not be reached", ex);

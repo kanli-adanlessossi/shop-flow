@@ -32,6 +32,7 @@ import com.shopflow.order.events.NotificationSender;
 import com.shopflow.order.events.OrderCancelled;
 import com.shopflow.order.events.OrderConfirmed;
 import com.shopflow.order.events.OrderPlaced;
+import com.shopflow.order.events.OrderShipped;
 import com.shopflow.order.events.Payload;
 import com.shopflow.order.payments.WebhookSignature;
 
@@ -216,6 +217,9 @@ abstract class StoryTestSupport {
 		}
 		if (payload instanceof OrderCancelled cancelled) {
 			return cancelled.orderId();
+		}
+		if (payload instanceof OrderShipped shipped) {
+			return shipped.orderId();
 		}
 		return -1;
 	}

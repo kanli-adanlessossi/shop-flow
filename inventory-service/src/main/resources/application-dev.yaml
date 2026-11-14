@@ -1,0 +1,4 @@
+spring:
+  flyway:
+    # Adds the development stock (SKU-001..SKU-008) from db/dev. Other profiles never load it.
+    locations: classpath:db/migration,classpath:db/dev

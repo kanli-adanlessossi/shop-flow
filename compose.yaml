@@ -1,8 +1,10 @@
-# DEVELOPMENT ONLY. Every credential in this file and in keycloak/shopflow-realm.json is a committed,
-# well-known value (Postgres shopflow/shopflow, Keycloak admin/admin, users alice and bob, the
-# shopflow-service secret). Never reuse them outside a laptop or a test run; see keycloak/README.md.
+# DEVELOPMENT ONLY. Every credential in this file and in order-platform/keycloak/shopflow-realm.json is a committed,
+# well-known value (Postgres shopflow/shopflow and inventory/inventory, Keycloak admin/admin, users alice and bob, the
+# shopflow-service secret). Never reuse them outside a laptop or a test run; see order-platform/keycloak/README.md.
 services:
   postgres:
+    # Orders database; only started with the 'orders' profile so each app's service-connection detection sees one PostgreSQL.
+    profiles: [orders]
     image: postgres:17-alpine
     environment:
       POSTGRES_DB: shopflow
@@ -20,11 +22,11 @@ services:
   keycloak:
     # Identity provider for local development only (start-dev: H2 database inside the container,
     # plain HTTP, no persistence between `down`s). Imports the "shopflow" realm on first start:
-    # roles customer and admin, users alice (customer) and bob (admin), public client shopflow-web.
+    # roles customer, admin and inventory, users alice (customer) and bob (admin), public client shopflow-web.
     image: quay.io/keycloak/keycloak:26.8.1
     command: ["start-dev", "--import-realm"]
     ports:
-      # Fixed host port: 8080 is the app, 8081 inventory (the WireMock stand-in; inventory-service is a placeholder).
+      # Fixed host port: 8080 is order-platform, 8081 inventory-service.
       - "8180:8080"
     environment:
       # Admin console login at http://localhost:8180 (dev only).
@@ -33,7 +35,7 @@ services:
       # Serves /health/ready on the management port 9000 inside the container.
       KC_HEALTH_ENABLED: "true"
     volumes:
-      - ./keycloak/shopflow-realm.json:/opt/keycloak/data/import/shopflow-realm.json:ro
+      - ./order-platform/keycloak/shopflow-realm.json:/opt/keycloak/data/import/shopflow-realm.json:ro
     healthcheck:
       # The image has no curl; talk HTTP through bash's /dev/tcp.
       test: ["CMD-SHELL", "exec 3<>/dev/tcp/localhost/9000; echo -e 'GET /health/ready HTTP/1.1\\r\\nHost: localhost\\r\\nConnection: close\\r\\n\\r\\n' >&3; timeout --preserve-status 1 cat <&3 | grep -m 1 status | grep -m 1 UP; ERROR=$$?; exec 3<&-; exec 3>&-; exit $$ERROR"]
@@ -68,3 +70,25 @@ services:
       timeout: 10s
       retries: 20
       start_period: 10s
+
+  postgres-inventory:
+    # Inventory database; only started with the 'inventory' profile.
+    profiles: [inventory]
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_DB: inventory
+      POSTGRES_USER: inventory
+      POSTGRES_PASSWORD: inventory
+    ports:
+      # Fixed host port 5433 (the orders database gets a random host port).
+      - "5433:5432"
+    volumes:
+      - inventory-db-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U inventory -d inventory"]
+      interval: 2s
+      timeout: 3s
+      retries: 15
+
+volumes:
+  inventory-db-data:

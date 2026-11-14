@@ -74,6 +74,21 @@ public class InventoryStandInContainer extends GenericContainer<InventoryStandIn
 		return Integer.parseInt(body.replaceAll("(?s).*\"count\"\\s*:\\s*(\\d+).*", "$1"));
 	}
 
+	/** How many requests (of any kind) arrived with an {@code Authorization: Bearer <token>} header. */
+	public int requestsWithBearerToken() {
+		return count("{\"headers\":{\"Authorization\":{\"matches\":\"Bearer .+\"}}}");
+	}
+
+	/** How many requests (of any kind) arrived since the last {@link #reset}. */
+	public int allRequests() {
+		return count("{\"urlPathPattern\":\".*\"}");
+	}
+
+	private int count(String criteria) {
+		String body = admin("POST", "/__admin/requests/count", criteria);
+		return Integer.parseInt(body.replaceAll("(?s).*\"count\"\\s*:\\s*(\\d+).*", "$1"));
+	}
+
 	/** Back to the file stubs; recorded requests are forgotten. */
 	public void reset() {
 		admin("POST", "/__admin/mappings/reset", "");
