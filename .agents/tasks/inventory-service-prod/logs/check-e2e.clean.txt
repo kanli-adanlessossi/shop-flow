@@ -1,0 +1,22 @@
+﻿== 1. place order (alice, 3 x SKU-001): stock drops
+stock before=997, POST /api/orders -> 201
+order 3, stock after=994 (expected 994)
+== 2. cancel the order: stock returns
+PATCH CANCELLED (bob, admin; a customer gets 403) -> 200 {"id":3,"customerId":"alice","discountCode":null,"createdAt":"2026-11-14T15:53:09.725150Z","status":"CANCELLED","lines":[{"sku":"SKU-001","quantity":3,"unitPrice":5.99,"lineTotal":17.97}],"totals":{"lineCount":1,"unitCount":3,"amount":17.97}}
+stock after cancel=997 (expected 997)
+== 3. pay via webhook, then SHIPPED
+order 4 -> 201, amount=21.98, stock SKU-002 998 -> 996
+reservation 266d191a-fd77-477b-b4e6-a10f4ee14daa status=HELD
+-> 200 {"result":"CONFIRMED"}
+order status after webhook=CONFIRMED
+reservation status=CONFIRMED
+PATCH SHIPPED (bob) -> 200
+reservation status=SHIPPED; stock SKU-002 now 996 (expected 996)
+DELETE reservation (SHIPPED) -> 409 {"detail":"Reservation 266d191a-fd77-477b-b4e6-a10f4ee14daa has shipped and cannot be released","instance":"/api/stock/reservations/266d191a-fd77-477b-b4e6-a10f4ee14daa","status":409,"title":"Reservation already shipped","type":"https://example.com/problems/reservation-shipped","reservationId":"266d191a-fd77-477b-b4e6-a10f4ee14daa"}
+stock SKU-002 after release attempt: 996
+== 4. insufficient stock
+POST /api/orders 100000 x SKU-003 -> 409 {"detail":"Not enough stock to fulfil the order","instance":"/api/orders","status":409,"title":"Insufficient stock","type":"https://example.com/problems/insufficient-stock"}
+stock SKU-003 unchanged: 1000
+== 5. inventory without token
+GET /api/stock/SKU-001 no token -> 401
+POST reservations no token -> 401

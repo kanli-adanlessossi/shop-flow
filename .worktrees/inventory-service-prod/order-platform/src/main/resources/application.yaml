@@ -1,0 +1,130 @@
+spring:
+  application:
+    name: order-platform
+  jackson:
+    read:
+      strict-duplicate-detection: true # reject {"a":1,"a":2} instead of letting the last value win
+    write:
+      write-bigdecimal-as-plain: true # money is written as 1000, never 1E+3
+  threads:
+    virtual:
+      enabled: true
+  docker:
+    compose:
+      # Shared infrastructure lives in the root compose.yaml. start-only: stopping this app must not
+      # stop the Kafka and Keycloak that inventory-service uses too. The profile picks this app's database.
+      file: ../compose.yaml
+      lifecycle-management: start-only
+      profiles:
+        active: orders
+  kafka:
+    # Docker Compose support does not configure Kafka (Boot 4.1.2 has no connection-details
+    # factory for it), so the broker from the root compose.yaml is addressed by its fixed host port.
+    bootstrap-servers: localhost:9092
+    listener:
+      # One span per received record, continuing the trace from the record's traceparent header.
+      observation-enabled: true
+    # The producer keeps Boot's default String key and value serializers: the outbox already holds
+    # each event as envelope JSON (written with Boot's JsonMapper), and OutboxRelay sends it as is.
+    consumer:
+      # A group that starts after messages were sent (or is new) reads from the beginning
+      # instead of silently skipping them.
+      auto-offset-reset: earliest
+      # Wrapped so that a message that cannot be parsed is logged and skipped instead of failing
+      # the poll again and again (a "poison pill").
+      value-deserializer: org.springframework.kafka.support.serializer.ErrorHandlingDeserializer
+      properties:
+        spring.deserializer.value.delegate.class: org.springframework.kafka.support.serializer.JacksonJsonDeserializer
+        # Fixed target type: every value is read as OrderEvent, whatever headers say.
+        spring.json.value.default.type: com.shopflow.order.events.EventEnvelope
+        spring.json.use.type.headers: false
+        spring.json.trusted.packages: com.shopflow.order.events
+  security:
+    oauth2:
+      client:
+        # How this service signs in at inventory-service: client-credentials grant as the shopflow-service
+        # client (realm role "inventory"). The explicit token-uri means startup does not need Keycloak.
+        # The secret has no default: set SHOPFLOW_INVENTORY_CLIENT_SECRET (the dev profile has the dev one).
+        registration:
+          inventory:
+            provider: inventory
+            client-id: shopflow-service
+            client-secret: ${SHOPFLOW_INVENTORY_CLIENT_SECRET:}
+            authorization-grant-type: client_credentials
+        provider:
+          inventory:
+            token-uri: ${SHOPFLOW_TOKEN_URI:http://localhost:8180/realms/shopflow/protocol/openid-connect/token}
+      resourceserver:
+        jwt:
+          # Keycloak realm from the root compose.yaml. Boot reads the realm's discovery document and keys
+          # on the first request that carries a token, not at startup, so the app starts without
+          # Keycloak; tokens are rejected until it is reachable. Tokens must have this exact "iss".
+          issuer-uri: ${SHOPFLOW_ISSUER_URI:http://localhost:8180/realms/shopflow}
+          # authentication.name is this claim (default "sub"). An order belongs to the user whose
+          # name equals its customerId, so customerId is the Keycloak username (alice, bob, ...).
+          principal-claim-name: preferred_username
+          # Keycloak puts realm roles in the nested claim realm_access.roles, which the default
+          # converter (it reads "scope") does not see. The expression runs against the token's claims.
+          # The roles are upper-cased because hasRole('ADMIN') compares case-sensitively while the
+          # Keycloak roles are written in lower case (admin, customer).
+          authorities-claim-expressions:
+            - "[realm_access][roles].![toUpperCase()]"
+          # hasRole('ADMIN') looks for ROLE_ADMIN; the default prefix is SCOPE_.
+          authority-prefix: ROLE_
+  task:
+    execution:
+      propagate-context: true # @Async methods see the caller's trace context
+  datasource:
+    connection-fetch: lazy
+  jpa:
+    hibernate:
+      # Flyway owns the schema (db/migration). Hibernate only checks that the entities match it.
+      ddl-auto: validate
+  cache:
+    type: caffeine
+    cache-names: orders
+    caffeine:
+      spec: maximumSize=1000,expireAfterWrite=5m,recordStats
+  data:
+    web:
+      pageable:
+        serialization-mode: via-dto
+        max-page-size: 100
+  http:
+    clients:
+      # Service-to-service JSON calls: no sessions, so never store or replay cookies.
+      cookie-handling: disable
+  mvc:
+    problemdetails:
+      enabled: true
+    apiversion:
+      default: "2"
+      supported: "1,2"
+
+management:
+  health:
+    redis:
+      enabled: false # Redis is only used by the "redis" profile
+
+shopflow:
+  payment-timeout: 10s
+  cancel-after: 30m
+  cors:
+    # Web front ends allowed to call the API from a browser (exact origins, no trailing slash).
+    # Override in deployments, e.g. SHOPFLOW_CORS_ALLOWED_ORIGINS=https://shop.example.com
+    allowed-origins: ${SHOPFLOW_CORS_ALLOWED_ORIGINS:http://localhost:3000,http://localhost:5173}
+    max-age: 1h
+  processed-events-retention: 14d # how long handled event ids are remembered; keep above the topic retention
+  cancel-cron: "0 */5 * * * *" # when the unpaid-order cleanup runs (second minute hour day month weekday, UTC)
+  payments:
+    # Shared secret that signs the payment provider's webhooks. Never put a real one here: set the
+    # PAYMENT_WEBHOOK_SECRET environment variable. While it is empty the webhook endpoint answers 503.
+    webhook-secret: ${PAYMENT_WEBHOOK_SECRET:}
+    webhook-tolerance: 5m # how far a webhook's timestamp may differ from this server's clock
+  inventory:
+    # The real inventory-service (port 8081). For failure drills the WireMock stand-in (deploy/wiremock)
+    # can take its place; it ignores the Bearer token.
+    base-url: http://localhost:8081
+    connect-timeout: 1s
+    read-timeout: 500ms
+    max-concurrent-requests: 10 # read by @ConcurrencyLimit on InventoryStockReservations

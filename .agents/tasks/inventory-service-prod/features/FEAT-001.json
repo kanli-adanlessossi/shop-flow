@@ -1,0 +1,27 @@
+{
+  "id": "FEAT-001",
+  "type": "chore",
+  "description": "Shared infrastructure. Root compose.yaml with kafka, keycloak, postgres (profile orders) and postgres-inventory (profile inventory, volume inventory-db-data, host port 5433); realm role 'inventory' granted to the shopflow-service service account; both apps point Spring Boot Docker Compose at ../compose.yaml with lifecycle-management start-only so one app never stops the other's infrastructure. Independent of FEAT-002; must come first because FEAT-002 and FEAT-003 tests import the edited realm file.",
+  "status": "completed",
+  "steps": [
+    "Create compose.yaml at the repo root by moving the three services from order-platform/compose.yaml (keep images postgres:17-alpine, quay.io/keycloak/keycloak:26.8.1, apache/kafka:4.3.2; keycloak 8180:8080; kafka 9092:9092; healthchecks; DEVELOPMENT ONLY header). Change the realm mount to ./order-platform/keycloak/shopflow-realm.json. Put service postgres in compose profile 'orders'. Add service postgres-inventory (POSTGRES_DB/USER/PASSWORD inventory, ports 5433:5432, named volume inventory-db-data, same healthcheck style with the inventory user/db, profile 'inventory'). Fix the stale port comment on keycloak (8081 is now the real inventory-service).",
+    "git rm order-platform/compose.yaml and inventory-service/compose.yaml.",
+    "order-platform/keycloak/shopflow-realm.json: add realm role {name: inventory, description: reads and changes stock} and set user service-account-shopflow-service realmRoles to [\"admin\",\"inventory\"].",
+    "order-platform/src/main/resources/application.yaml: add spring.docker.compose.file: ../compose.yaml, lifecycle-management: start-only, profiles.active: orders. inventory-service/src/main/resources/application.properties: add spring.docker.compose.file=../compose.yaml, spring.docker.compose.lifecycle-management=start-only, spring.docker.compose.profiles.active=inventory (FEAT-003 converts this file to YAML).",
+    "Update every reference to the old compose location: order-platform/keycloak/README.md (lines 3, 15), deploy/wiremock/README.md line 16, load-tests/compare-virtual-threads.ps1 line 11, comments in order-platform/src/test/java/com/shopflow/order/{TestOrderPlatformApplication,KeycloakTestcontainersConfiguration,TestcontainersConfiguration}.java and order-platform/src/main/resources/application.yaml (comment on kafka and keycloak), docs/NOTES.md compose mentions (grep for 'compose.yaml' and 'order-platform/compose').",
+    "Start the stack by hand and check (see verification); stop it again."
+  ],
+  "acceptance_criteria": [
+    "docker compose -f compose.yaml --profile orders --profile inventory up -d --wait reaches healthy for kafka, keycloak, postgres and postgres-inventory",
+    "A client-credentials token for shopflow-service from http://localhost:8180/realms/shopflow/protocol/openid-connect/token has realm_access.roles containing inventory and admin",
+    "No file references order-platform/compose.yaml any more outside .agents/ history",
+    "./mvnw -B -ntp -pl order-platform verify passes"
+  ],
+  "verification": [
+    "docker compose -f compose.yaml --profile orders --profile inventory config  (exit 0)",
+    "docker compose -f compose.yaml --profile orders --profile inventory up -d --wait ; request a token with curl/Invoke-RestMethod (grant_type=client_credentials, client_id=shopflow-service, client_secret=shopflow-service-secret), decode the payload, confirm roles; then docker compose -f compose.yaml --profile orders --profile inventory down",
+    "./mvnw -B -ntp -pl order-platform verify  (script + log file under order-platform/target/)"
+  ],
+  "blocked_reason": null,
+  "findings": "Done as planned. Verified: compose config exit 0; up -d --wait with profiles orders+inventory: kafka, keycloak, postgres, postgres-inventory all healthy; discovery endpoint 200; shopflow-service token realm_access.roles = admin,inventory; down -v ok; ./mvnw -B -ntp -pl order-platform verify: 164 tests, 0 failures, BUILD SUCCESS in 2m13s (log order-platform/target/feat001.log). Deviations/notes: (1) load-tests/compare-virtual-threads.ps1 ran 'docker compose down -v' inside order-platform/, which no longer has a compose file; changed to 'docker compose -f root compose.yaml --profile orders down -v'. (2) inventory-service/README.md line 14 and keycloak/README.md, docs/NOTES.md ~451 text updated to root compose.yaml. (3) The first 'up --wait' on a cold start once failed because Keycloak was killed by an interrupted earlier call, a clean re-run passed; Keycloak needs about 40-60 s to become healthy. (4) Boot compose profiles behaviour (single PostgreSQL per app) is NOT yet run with the apps; verify in FEAT-003/e2e. (5) Test-class comments saying 'same image as compose.yaml' still hold and were left unchanged; only TestOrderPlatformApplication javadoc was edited. Host port of the orders postgres stays random."
+}
