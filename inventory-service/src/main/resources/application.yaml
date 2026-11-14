@@ -1,0 +1,53 @@
+server:
+  # order-platform calls inventory at shopflow.inventory.base-url (http://localhost:8081); 8080 is order-platform's own.
+  port: 8081
+spring:
+  application:
+    name: inventory-service
+  threads:
+    virtual:
+      enabled: true
+  docker:
+    compose:
+      # Shared infrastructure lives in the root compose.yaml. start-only: this app never stops the Kafka
+      # and Keycloak that order-platform uses too. The profile picks this app's database (postgres-inventory).
+      file: ../compose.yaml
+      lifecycle-management: start-only
+      profiles:
+        active: inventory
+  kafka:
+    # Docker Compose support does not configure Kafka (Boot has no connection-details factory for it),
+    # so the broker from the root compose.yaml is addressed by its fixed host port.
+    bootstrap-servers: localhost:9092
+    listener:
+      observation-enabled: true
+    consumer:
+      auto-offset-reset: earliest
+  security:
+    oauth2:
+      resourceserver:
+        jwt:
+          # Keycloak realm from the root compose.yaml, the same issuer order-platform trusts. Boot reads the
+          # discovery document on the first request that carries a token, so the app starts without Keycloak.
+          issuer-uri: ${SHOPFLOW_ISSUER_URI:http://localhost:8180/realms/shopflow}
+          principal-claim-name: preferred_username
+          # Keycloak puts realm roles in realm_access.roles; they are upper-cased because hasRole("INVENTORY")
+          # compares case-sensitively while the realm role is "inventory".
+          authorities-claim-expressions:
+            - "[realm_access][roles].![toUpperCase()]"
+          authority-prefix: ROLE_
+  datasource:
+    connection-fetch: lazy
+  jpa:
+    open-in-view: false # no database access while the response is rendered
+    hibernate:
+      # Flyway owns the schema (db/migration). Hibernate only checks that the entities match it.
+      ddl-auto: validate
+  mvc:
+    problemdetails:
+      enabled: true
+shopflow:
+  inventory:
+    # How long a HELD reservation may wait for its order to be paid before it is released.
+    # Keep it above order-platform's shopflow.cancel-after (30m).
+    hold-ttl: 45m
