@@ -8,7 +8,6 @@ import org.springframework.transaction.annotation.Transactional;
 
 import com.shopflow.inventory.domain.StockService;
 
-
 /**
  * Handles one order event exactly once in effect, although Kafka may deliver it more than once.
  *
@@ -24,42 +23,43 @@ import com.shopflow.inventory.domain.StockService;
 @Service
 public class OrderEventHandler {
 
-/** The Kafka group id of the listener; the inbox keeps one set of ids per consumer. */
-static final String CONSUMER = "inventory";
+	/** The Kafka group id of the listener; the inbox keeps one set of ids per consumer. */
+	static final String CONSUMER = "inventory";
 
-private static final Logger LOGGER = LoggerFactory.getLogger(OrderEventHandler.class);
+	private static final Logger LOGGER = LoggerFactory.getLogger(OrderEventHandler.class);
 
-private final ProcessedEvents processed;
+	private final ProcessedEvents processed;
 
-private final StockService stock;
+	private final StockService stock;
 
-public OrderEventHandler(ProcessedEvents processed, StockService stock) {
-this.processed = processed;
-this.stock = stock;
-}
+	public OrderEventHandler(ProcessedEvents processed, StockService stock) {
+		this.processed = processed;
+		this.stock = stock;
+	}
 
-@Transactional
-public void handle(EventEnvelope event) {
-switch (event.payload()) {
-case UnknownPayload unknown -> LOGGER.warn("Skipping event {} of a type this version does not know (fields {})",
-event.eventId(), unknown.fields().keySet());
-case OrderConfirmed confirmed -> apply(event, confirmed.reservationId(), true);
-case OrderShipped shipped -> apply(event, shipped.reservationId(), false);
-}
-}
+	@Transactional
+	public void handle(EventEnvelope event) {
+		switch (event.payload()) {
+			case UnknownPayload unknown -> LOGGER.warn("Skipping event {} of a type this version does not know (fields {})",
+					event.eventId(), unknown.fields().keySet());
+			case OrderConfirmed confirmed -> apply(event, confirmed.reservationId(), true);
+			case OrderShipped shipped -> apply(event, shipped.reservationId(), false);
+		}
+	}
 
-private void apply(EventEnvelope event, @Nullable String reservationId, boolean confirm) {
-if (reservationId == null || reservationId.isBlank()) {
-// Nothing was done, so nothing is recorded in the inbox.
-LOGGER.warn("Skipping event {} ({}): it carries no reservation id", event.eventId(), event.type());
-return;
-}
-if (!this.processed.markProcessed(CONSUMER, event.eventId())) {
-LOGGER.info("Ignoring duplicate delivery of event {} ({})", event.eventId(), event.type());
-return;
-}
-boolean changed = confirm ? this.stock.confirm(reservationId) : this.stock.ship(reservationId);
-LOGGER.info("Event {} ({}) for reservation {}: {}", event.eventId(), event.type(), reservationId,
-changed ? "status moved" : "no change");
-}
+	private void apply(EventEnvelope event, @Nullable String reservationId, boolean confirm) {
+		if (reservationId == null || reservationId.isBlank()) {
+			// Nothing was done, so nothing is recorded in the inbox.
+			LOGGER.warn("Skipping event {} ({}): it carries no reservation id", event.eventId(), event.type());
+			return;
+		}
+		if (!this.processed.markProcessed(CONSUMER, event.eventId())) {
+			LOGGER.info("Ignoring duplicate delivery of event {} ({})", event.eventId(), event.type());
+			return;
+		}
+		boolean changed = confirm ? this.stock.confirm(reservationId) : this.stock.ship(reservationId);
+		LOGGER.info("Event {} ({}) for reservation {}: {}", event.eventId(), event.type(), reservationId,
+				changed ? "status moved" : "no change");
+	}
+
 }

@@ -25,42 +25,43 @@ import net.javacrumbs.shedlock.spring.annotation.SchedulerLock;
 @Component
 public class HeldReservationExpiry {
 
-private static final Logger LOGGER = LoggerFactory.getLogger(HeldReservationExpiry.class);
+	private static final Logger LOGGER = LoggerFactory.getLogger(HeldReservationExpiry.class);
 
-private final ReservationRepository reservations;
+	private final ReservationRepository reservations;
 
-private final StockService stock;
+	private final StockService stock;
 
-private final InventoryProperties properties;
+	private final InventoryProperties properties;
 
-private final Clock clock;
+	private final Clock clock;
 
-public HeldReservationExpiry(ReservationRepository reservations, StockService stock, InventoryProperties properties,
-Clock clock) {
-this.reservations = reservations;
-this.stock = stock;
-this.properties = properties;
-this.clock = clock;
-}
+	public HeldReservationExpiry(ReservationRepository reservations, StockService stock, InventoryProperties properties,
+			Clock clock) {
+		this.reservations = reservations;
+		this.stock = stock;
+		this.properties = properties;
+		this.clock = clock;
+	}
 
-@Scheduled(cron = "${shopflow.inventory.expiry-cron:0 */5 * * * *}", zone = "UTC")
-@SchedulerLock(name = "expireHeldReservations", lockAtMostFor = "10m")
-public void expire() {
-Instant cutoff = this.clock.instant().minus(this.properties.holdTtl());
-int released = 0;
-for (String id : this.reservations.findHeldIdsCreatedBefore(cutoff)) {
-try {
-if (this.stock.releaseIfStillHeld(id, cutoff)) {
-released++;
-}
-}
-catch (RuntimeException ex) {
-// One failing reservation must not block the others; the next run tries it again.
-LOGGER.warn("Could not release expired reservation {}", id, ex);
-}
-}
-if (released > 0) {
-LOGGER.info("Released {} reservations held longer than {}", released, this.properties.holdTtl());
-}
-}
+	@Scheduled(cron = "${shopflow.inventory.expiry-cron:0 */5 * * * *}", zone = "UTC")
+	@SchedulerLock(name = "expireHeldReservations", lockAtMostFor = "10m")
+	public void expire() {
+		Instant cutoff = this.clock.instant().minus(this.properties.holdTtl());
+		int released = 0;
+		for (String id : this.reservations.findHeldIdsCreatedBefore(cutoff)) {
+			try {
+				if (this.stock.releaseIfStillHeld(id, cutoff)) {
+					released++;
+				}
+			}
+			catch (RuntimeException ex) {
+				// One failing reservation must not block the others; the next run tries it again.
+				LOGGER.warn("Could not release expired reservation {}", id, ex);
+			}
+		}
+		if (released > 0) {
+			LOGGER.info("Released {} reservations held longer than {}", released, this.properties.holdTtl());
+		}
+	}
+
 }

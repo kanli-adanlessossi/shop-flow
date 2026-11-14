@@ -14,8 +14,8 @@ import com.fasterxml.jackson.annotation.JsonTypeName;
 @JsonIgnoreProperties(ignoreUnknown = true)
 public record OrderConfirmed(long orderId, @Nullable String reservationId) implements Payload {
 
-@Override
-public String key() {
-return String.valueOf(this.orderId);
-}
+	@Override
+	public String key() {
+		return String.valueOf(this.orderId);
+	}
 }

@@ -28,72 +28,72 @@ import tools.jackson.databind.json.JsonMapper;
  */
 interface StockContract {
 
-JsonMapper JSON = JsonMapper.builder().build();
+	JsonMapper JSON = JsonMapper.builder().build();
 
-HttpClient CLIENT = HttpClient.newHttpClient();
+	HttpClient CLIENT = HttpClient.newHttpClient();
 
-/** Base URL of the target, without a trailing slash. */
-String baseUrl();
+	/** Base URL of the target, without a trailing slash. */
+	String baseUrl();
 
-/** The Bearer token to send, or {@code null} for a target that ignores it. */
-String token();
+	/** The Bearer token to send, or {@code null} for a target that ignores it. */
+	String token();
 
-/** A SKU the target knows. */
-String knownSku();
+	/** A SKU the target knows. */
+	String knownSku();
 
-default HttpResponse<String> call(String method, String path, String body) throws IOException, InterruptedException {
-HttpRequest.Builder request = HttpRequest.newBuilder(URI.create(baseUrl() + path));
-if (body == null) {
-request.method(method, HttpRequest.BodyPublishers.noBody());
-}
-else {
-request.header("Content-Type", "application/json").method(method, HttpRequest.BodyPublishers.ofString(body));
-}
-if (token() != null) {
-request.header("Authorization", "Bearer " + token());
-}
-return CLIENT.send(request.build(), HttpResponse.BodyHandlers.ofString());
-}
+	default HttpResponse<String> call(String method, String path, String body) throws IOException, InterruptedException {
+		HttpRequest.Builder request = HttpRequest.newBuilder(URI.create(baseUrl() + path));
+		if (body == null) {
+			request.method(method, HttpRequest.BodyPublishers.noBody());
+		}
+		else {
+			request.header("Content-Type", "application/json").method(method, HttpRequest.BodyPublishers.ofString(body));
+		}
+		if (token() != null) {
+			request.header("Authorization", "Bearer " + token());
+		}
+		return CLIENT.send(request.build(), HttpResponse.BodyHandlers.ofString());
+	}
 
-default String reservationBody(String reservationId) {
-return "{\"reservationId\":\"" + reservationId + "\",\"lines\":[{\"sku\":\"" + knownSku() + "\",\"quantity\":1}]}";
-}
+	default String reservationBody(String reservationId) {
+		return "{\"reservationId\":\"" + reservationId + "\",\"lines\":[{\"sku\":\"" + knownSku() + "\",\"quantity\":1}]}";
+	}
 
-@Test
-@DisplayName("POST /api/stock/reservations answers 200 with the reservation id")
-default void reserve() throws Exception {
-String id = "contract-" + UUID.randomUUID();
+	@Test
+	@DisplayName("POST /api/stock/reservations answers 200 with the reservation id")
+	default void reserve() throws Exception {
+		String id = "contract-" + UUID.randomUUID();
 
-HttpResponse<String> response = call("POST", "/api/stock/reservations", reservationBody(id));
+		HttpResponse<String> response = call("POST", "/api/stock/reservations", reservationBody(id));
 
-assertThat(response.statusCode()).isEqualTo(200);
-JsonNode json = JSON.readTree(response.body());
-assertThat(json.get("reservationId").isString()).isTrue();
-assertThat(json.get("reservationId").asString()).isEqualTo(id);
-assertThat(call("DELETE", "/api/stock/reservations/" + id, null).statusCode()).isEqualTo(204);
-}
+		assertThat(response.statusCode()).isEqualTo(200);
+		JsonNode json = JSON.readTree(response.body());
+		assertThat(json.get("reservationId").isString()).isTrue();
+		assertThat(json.get("reservationId").asString()).isEqualTo(id);
+		assertThat(call("DELETE", "/api/stock/reservations/" + id, null).statusCode()).isEqualTo(204);
+	}
 
-@Test
-@DisplayName("DELETE /api/stock/reservations/{id} answers 204 without a body")
-default void release() throws Exception {
-String id = "contract-" + UUID.randomUUID();
-assertThat(call("POST", "/api/stock/reservations", reservationBody(id)).statusCode()).isEqualTo(200);
+	@Test
+	@DisplayName("DELETE /api/stock/reservations/{id} answers 204 without a body")
+	default void release() throws Exception {
+		String id = "contract-" + UUID.randomUUID();
+		assertThat(call("POST", "/api/stock/reservations", reservationBody(id)).statusCode()).isEqualTo(200);
 
-HttpResponse<String> response = call("DELETE", "/api/stock/reservations/" + id, null);
+		HttpResponse<String> response = call("DELETE", "/api/stock/reservations/" + id, null);
 
-assertThat(response.statusCode()).isEqualTo(204);
-assertThat(response.body()).isEmpty();
-}
+		assertThat(response.statusCode()).isEqualTo(204);
+		assertThat(response.body()).isEmpty();
+	}
 
-@Test
-@DisplayName("GET /api/stock/{sku} answers 200 with sku and a numeric available")
-default void stockLevel() throws Exception {
-HttpResponse<String> response = call("GET", "/api/stock/" + knownSku(), null);
+	@Test
+	@DisplayName("GET /api/stock/{sku} answers 200 with sku and a numeric available")
+	default void stockLevel() throws Exception {
+		HttpResponse<String> response = call("GET", "/api/stock/" + knownSku(), null);
 
-assertThat(response.statusCode()).isEqualTo(200);
-JsonNode json = JSON.readTree(response.body());
-assertThat(json.get("sku").asString()).isEqualTo(knownSku());
-assertThat(json.get("available").isNumber()).isTrue();
-assertThat(json.get("available").asInt()).isGreaterThanOrEqualTo(0);
-}
+		assertThat(response.statusCode()).isEqualTo(200);
+		JsonNode json = JSON.readTree(response.body());
+		assertThat(json.get("sku").asString()).isEqualTo(knownSku());
+		assertThat(json.get("available").isNumber()).isTrue();
+		assertThat(json.get("available").asInt()).isGreaterThanOrEqualTo(0);
+	}
 }

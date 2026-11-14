@@ -14,27 +14,27 @@ import org.testcontainers.utility.MountableFile;
 @Testcontainers(disabledWithoutDocker = true)
 class WireMockStubContractTest implements StockContract {
 
-private static final int PORT = 8080;
+	private static final int PORT = 8080;
 
-@Container
-static final GenericContainer<?> WIREMOCK = new GenericContainer<>("wiremock/wiremock:3.13.1")
-.withExposedPorts(PORT)
-.withCopyFileToContainer(MountableFile.forClasspathResource("wiremock/inventory"), "/home/wiremock")
-.withCommand("--global-response-templating", "--disable-gzip")
-.waitingFor(Wait.forHttp("/__admin/health").forPort(PORT).forStatusCode(200));
+	@Container
+	static final GenericContainer<?> WIREMOCK = new GenericContainer<>("wiremock/wiremock:3.13.1")
+			.withExposedPorts(PORT)
+			.withCopyFileToContainer(MountableFile.forClasspathResource("wiremock/inventory"), "/home/wiremock")
+			.withCommand("--global-response-templating", "--disable-gzip")
+			.waitingFor(Wait.forHttp("/__admin/health").forPort(PORT).forStatusCode(200));
 
-@Override
-public String baseUrl() {
-return "http://" + WIREMOCK.getHost() + ":" + WIREMOCK.getMappedPort(PORT);
-}
+	@Override
+	public String baseUrl() {
+		return "http://" + WIREMOCK.getHost() + ":" + WIREMOCK.getMappedPort(PORT);
+	}
 
-@Override
-public String token() {
-return null; // the stand-in ignores the token
-}
+	@Override
+	public String token() {
+		return null; // the stand-in ignores the token
+	}
 
-@Override
-public String knownSku() {
-return "SKU-001";
-}
+	@Override
+	public String knownSku() {
+		return "SKU-001";
+	}
 }

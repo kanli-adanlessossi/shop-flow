@@ -19,6 +19,6 @@ import jakarta.validation.constraints.NotNull;
 @ConfigurationProperties("shopflow.inventory")
 @Validated
 public record InventoryProperties(
-@DefaultValue("45m") @NotNull Duration holdTtl,
-@DefaultValue("14d") @NotNull Duration processedEventsRetention) {
+		@DefaultValue("45m") @NotNull Duration holdTtl,
+		@DefaultValue("14d") @NotNull Duration processedEventsRetention) {
 }
