@@ -21,7 +21,7 @@ public record OrderRequest(
 				this.customerId,
 				this.discountCode,
 				this.lines.stream()
-						.map(line -> new OrderDraft.Line(line.sku(), line.quantity(), line.unitPrice()))
+						.map(line -> new OrderDraft.Line(line.sku(), line.quantity()))
 						.toList());
 	}
 

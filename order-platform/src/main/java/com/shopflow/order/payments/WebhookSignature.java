@@ -47,7 +47,7 @@ public final class WebhookSignature {
 		}
 		Long timestamp = null;
 		List<String> signatures = new ArrayList<>();
-		for (String part : header.split(",")) {
+		for (String part : header.split(",", -1)) {
 			String[] pair = part.trim().split("=", 2);
 			if (pair.length != 2) {
 				continue;

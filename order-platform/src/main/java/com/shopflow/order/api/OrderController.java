@@ -10,6 +10,7 @@ import org.springframework.data.web.PageableDefault;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
+import org.springframework.security.core.Authentication;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PatchMapping;
@@ -48,15 +49,13 @@ public class OrderController {
 
 	private static final String CUSTOMER_IS_CALLER = "#request.customerId() == authentication.name";
 
-	private static final String NOT_A_CANCEL = "#request.status() != T(com.shopflow.order.domain.OrderStatus).CANCELLED";
-
 	private static final String CREATE_RULE = ADMIN + " or " + CUSTOMER_IS_CALLER;
 
 	private static final String OWNER_RULE = ADMIN + " or " + OWNER;
 
 	private static final String REPLACE_RULE = ADMIN + " or (" + OWNER + " and " + CUSTOMER_IS_CALLER + ")";
 
-	private static final String STATUS_RULE = ADMIN + " or (" + OWNER + " and " + NOT_A_CANCEL + ")";
+	private static final String STATUS_RULE = ADMIN;
 
 	private final OrderService orders;
 
@@ -94,18 +93,21 @@ public class OrderController {
 		return OrderV2.from(this.orders.findById(id));
 	}
 
-	/** Newest first by default. Version 1 has no status, so it cannot be filtered by it. */
+	/**
+	 * Newest first by default. Version 1 has no status, so it cannot be filtered by it. An admin sees every
+	 * order; everyone else sees only their own.
+	 */
 	@GetMapping(version = "1")
-	public Page<OrderV1.Item> listV1(
+	public Page<OrderV1.Item> listV1(Authentication authentication,
 			@PageableDefault(size = 20, sort = DEFAULT_SORT, direction = Sort.Direction.DESC) Pageable pageable) {
-		return this.orders.search(null, pageable).map(OrderV1.Item::from);
+		return this.orders.search(callerScope(authentication), null, pageable).map(OrderV1.Item::from);
 	}
 
 	@GetMapping(version = "2")
-	public Page<OrderV2.Item> listV2(
+	public Page<OrderV2.Item> listV2(Authentication authentication,
 			@RequestParam(required = false) @Nullable OrderStatus status,
 			@PageableDefault(size = 20, sort = DEFAULT_SORT, direction = Sort.Direction.DESC) Pageable pageable) {
-		return this.orders.search(status, pageable).map(OrderV2.Item::from);
+		return this.orders.search(callerScope(authentication), status, pageable).map(OrderV2.Item::from);
 	}
 
 	// ---- replace ------------------------------------------------------------------------
@@ -125,9 +127,10 @@ public class OrderController {
 	// ---- status (version 2 only: version 1 has no status) -------------------------------
 
 	/**
-	 * The owner may move an order to another status, but only an admin may cancel one (answer 403
-	 * otherwise). The checks are on this HTTP entry point, not on {@code OrderService}: the scheduled
-	 * cleanup of unpaid orders cancels through the service without a logged-in user.
+	 * Admin only (403 otherwise): cancel an unpaid order or ship a confirmed one; any other move is 409.
+	 * An order becomes CONFIRMED only through the payment webhook. The check is on this HTTP entry point,
+	 * not on {@code OrderService}: the scheduled cleanup of unpaid orders cancels through the service
+	 * without a logged-in user.
 	 */
 	@PreAuthorize(STATUS_RULE)
 	@PatchMapping(path = "/{id}/status", version = "2")
@@ -146,6 +149,13 @@ public class OrderController {
 	@ResponseStatus(HttpStatus.NO_CONTENT)
 	public void delete(@PathVariable long id) {
 		this.orders.delete(id);
+	}
+
+	/** The customer id to restrict a list to: none for an admin, the caller for everyone else. */
+	private static @Nullable String callerScope(Authentication authentication) {
+		boolean admin = authentication.getAuthorities().stream()
+				.anyMatch(authority -> "ROLE_ADMIN".equals(authority.getAuthority()));
+		return admin ? null : authentication.getName();
 	}
 
 	private static URI location(Long id) {

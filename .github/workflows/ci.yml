@@ -1,5 +1,6 @@
 # Builds and tests every module on every push, as one Maven reactor from the parent pom: compile
-# (with Error Prone / NullAway), all unit, slice and integration tests, and packaging. The
+# (Error Prone and NullAway are configured in order-platform only; the two skeleton modules compile
+# without them), all unit, slice and integration tests, and packaging. The
 # Testcontainers-based tests (PostgreSQL, Kafka, Keycloak, WireMock) run against the runner's own
 # Docker; nothing else needs to be installed.
 name: CI
@@ -22,7 +23,8 @@ jobs:
   build:
     name: Build and test
     runs-on: ubuntu-latest
-    # The full build takes about 3 minutes locally (Keycloak starts twice); leave room for image pulls.
+    # The full build took 2:26 to 3:19 minutes in the recorded local runs (Keycloak starts twice); leave
+    # room for image pulls on a cold runner.
     timeout-minutes: 30
 
     steps:
@@ -58,15 +60,23 @@ jobs:
           if-no-files-found: ignore
           retention-days: 14
 
+      # Fails when tests were skipped that no @Disabled annotation explains, typically the Testcontainers
+      # tests on a runner without Docker (they use disabledWithoutDocker and would skip silently).
+      - name: Check for unexpected skipped tests
+        if: ${{ success() }}
+        run: bash .github/scripts/check-skipped-tests.sh
       # Non-functional target: CI finishes in under 10 minutes. Every run writes its duration to the
       # run summary; above WARN_AFTER it adds a warning, at FAIL_AFTER or more the job fails, so a slow
-      # creep shows up long before the target is missed. Measured from the first step to this one:
+      # creep shows up long before the target is missed. FAIL_AFTER is the target itself. WARN_AFTER is
+      # about twice the slowest recorded local run (3:19). No run on a hosted runner has been measured
+      # yet: adjust WARN_AFTER once the run summaries show real numbers.
+      # Measured from the first step to this one:
       # waiting for a runner and the post-job steps (e.g. saving the Maven cache) are not included.
       # The 30-minute timeout above stays as the safety stop for a hung build.
       - name: Check duration target
         if: ${{ !cancelled() }}
         env:
-          WARN_AFTER_SECONDS: 480
+          WARN_AFTER_SECONDS: 360
           FAIL_AFTER_SECONDS: 600
         run: |
           elapsed=$(( $(date +%s) - CI_STARTED_AT ))

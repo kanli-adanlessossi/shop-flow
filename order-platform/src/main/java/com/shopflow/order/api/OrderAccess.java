@@ -26,6 +26,9 @@ public class OrderAccess {
 	/**
 	 * True if the order exists and belongs to the caller. True as well when the order does not exist,
 	 * so the request goes on and gets its normal 404 instead of a 403; there is nothing to protect.
+	 * Accepted trade-off: 404 for a missing id and 403 for someone else's lets a signed-in user tell
+	 * which order ids exist (not what is in them). docs/user-stories.md asks for exactly these two answers,
+	 * and ids are sequential numbers anyway. Answer 404 for both here if ids ever become sensitive.
 	 * The read uses the order cache, so a check is normally no extra database query.
 	 */
 	public boolean isOwner(long orderId, Authentication authentication) {

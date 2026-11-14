@@ -12,7 +12,7 @@ all as Testcontainers. Run only them, from the repo root, with
 `./mvnw -pl order-platform test -Dgroups=story`.
 
 Criteria marked **open** are not implemented; their test is `@Disabled` with the reason, so the gap is
-visible in every test report instead of being forgotten.
+visible in every test report instead of being forgotten. There are none at the moment.
 
 Users (Keycloak realm `shopflow`): `alice` (customer), `bob` (admin), client `shopflow-service`
 (client credentials, admin).
@@ -30,9 +30,14 @@ As an operator, I want to see which version and profiles are running, so that I 
 
 As a customer, I want to place an order, so that the goods are reserved for me.
 
-- `POST /api/orders` with lines (SKU, quantity, unit price) answers 201, a `Location` header and the
+- `POST /api/orders` with lines (SKU, quantity) answers 201, a `Location` header and the
   order in status `PENDING_PAYMENT`, with line totals and the order total.
-- The stock is reserved at inventory-service under a reservation id stored with the order.
+- Prices come from the shop's price list (table `sku_prices`), never from the request: a `unitPrice`
+  in the body is ignored. A SKU without a price is 422, and nothing is reserved. The price is copied
+  into the order line, so a later price change does not alter existing orders.
+- The stock is reserved at inventory-service under a reservation id stored with the order. (The
+  contract is the one the WireMock stubs in `deploy/wiremock/inventory` define. The `inventory-service`
+  module in this repo is only a placeholder and does not implement it yet.)
 - Not enough stock: 409 problem detail, no order is created.
 - Inventory unavailable: 503 problem detail after a short retry, no order is created, and a possibly
   made reservation is released.
@@ -47,16 +52,27 @@ As a customer, I want to see my orders, so that I can follow them.
   missing one 404.
 - `GET /api/orders` lists orders newest first, page by page, filterable by status (v2), sortable by
   `total`, `customerId`, `createdAt`, `status`, `id`; an unknown sort property is 400.
-- **open:** a customer's list shows only their own orders (today it shows all orders).
+- A customer's list (and its page count) shows only their own orders; an admin's list shows all
+  orders.
 
 ## US-4 Change or delete an unpaid order
 
 As a customer, I want to change or remove an order before I pay, so that I can correct mistakes.
 
 - `PUT /api/orders/{id}` replaces customer, discount code and lines while the order is
-  `PENDING_PAYMENT`; afterwards 409 with the order status.
+  `PENDING_PAYMENT`; afterwards 409 with the order status. The new lines are priced from the price
+  list, like in US-2.
+- The stock reservation follows the lines. If the SKUs or quantities change, the new lines are reserved
+  first and the old reservation is released after the change is committed; if inventory cannot cover
+  the new lines the answer is 409 (503 if inventory is down) and the order stays as it was. Near an
+  empty shelf the new lines must fit next to the old ones for a moment, so a change can be refused
+  although the net change would fit. Changing only the customer or discount code does not call
+  inventory.
 - `DELETE /api/orders/{id}` removes an order that is `PENDING_PAYMENT` or `CANCELLED` (204); a
-  confirmed order is 409.
+  confirmed order is 409. The order's stock reservation is released at inventory-service once the
+  delete is committed.
+- If two requests change the same order at the same moment, the second one is 409 ("changed
+  concurrently"); reload and try again.
 - An order cannot be handed to another customer (403).
 
 ## US-5 API versions
@@ -84,9 +100,11 @@ As the shop, I want orders that are not paid in time to be cancelled, so that th
 available again.
 
 - Orders still `PENDING_PAYMENT` after `shopflow.cancel-after` are cancelled by a scheduled job.
-- Their stock reservation is released at inventory-service first.
-- Paid orders are left alone; if inventory is unavailable the order stays unpaid and is retried
-  on the next run.
+- The order is cancelled first; its stock reservation is released at inventory-service right after.
+  A payment that arrives after the cancel is a late payment (refused), never a confirmed order
+  without stock.
+- Paid orders are left alone. If inventory is unavailable the order is still cancelled, the release is
+  marked pending and the next run retries it before it looks at new orders.
 - An `order.cancelled` event with reason `unpaid` is published.
 
 ## US-8 Pay for an order
@@ -98,6 +116,8 @@ be shipped.
   `order.confirmed`.
 - The same provider event delivered again is answered `DUPLICATE` and changes nothing; a second
   payment for a confirmed order is `ALREADY_CONFIRMED`.
+- If the order is changed (for example cancelled) at the same moment, the webhook is 409 and rolled
+  back completely, so the provider's retry is handled again.
 - A wrong amount is 422 and the order stays unpaid; a payment for a cancelled order is 409 (refund
   needed); `payment.failed` is acknowledged and ignored.
 - A missing or wrong signature is 401.
@@ -106,8 +126,14 @@ be shipped.
 
 As an administrator, I want to cancel an order, so that I can handle problems for customers.
 
-- `PATCH /api/orders/{id}/status` with `CANCELLED` is allowed for admins only (403 for customers,
-  even for their own order).
+- `PATCH /api/orders/{id}/status` is allowed for admins only (403 for customers, whatever status they
+  send and even for their own order).
+- Only two moves exist: `PENDING_PAYMENT` to `CANCELLED` and `CONFIRMED` to `SHIPPED`. Any other
+  move is 409 and changes nothing; in particular `CONFIRMED` is reached only through the payment
+  webhook (US-8), and a cancelled order cannot be revived. Asking for the status the order already
+  has answers 200 and changes nothing.
+- A cancelled order's stock reservation is released at inventory-service once the cancel is
+  committed.
 - An `order.cancelled` event with reason `cancelled on request` is published once, even if the
   order is cancelled again.
 

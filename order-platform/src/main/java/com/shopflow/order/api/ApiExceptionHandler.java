@@ -11,13 +11,16 @@ import org.springframework.http.HttpStatus;
 import org.springframework.http.HttpStatusCode;
 import org.springframework.http.ProblemDetail;
 import org.springframework.http.ResponseEntity;
+import org.springframework.orm.ObjectOptimisticLockingFailureException;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 import org.springframework.web.context.request.WebRequest;
 import org.springframework.web.servlet.mvc.method.annotation.ResponseEntityExceptionHandler;
 
+import com.shopflow.order.domain.IllegalStatusTransitionException;
 import com.shopflow.order.domain.InsufficientStockException;
+import com.shopflow.order.domain.UnknownSkuException;
 import com.shopflow.order.domain.LatePaymentException;
 import com.shopflow.order.domain.PaymentAmountMismatchException;
 import com.shopflow.order.payments.InvalidWebhookSignatureException;
@@ -65,6 +68,15 @@ public class ApiExceptionHandler extends ResponseEntityExceptionHandler {
 	private static final URI ORDER_NOT_MODIFIABLE_TYPE =
 			URI.create("https://example.com/problems/order-not-modifiable");
 
+	private static final URI ILLEGAL_TRANSITION_TYPE =
+			URI.create("https://example.com/problems/illegal-status-transition");
+
+	private static final URI CONCURRENT_UPDATE_TYPE =
+			URI.create("https://example.com/problems/concurrent-update");
+
+	private static final URI UNKNOWN_SKU_TYPE =
+			URI.create("https://example.com/problems/unknown-sku");
+
 	private final MeterRegistry meters;
 
 	public ApiExceptionHandler(MeterRegistry meters) {
@@ -98,6 +110,38 @@ public class ApiExceptionHandler extends ResponseEntityExceptionHandler {
 		problem.setTitle("Order cannot be changed");
 		problem.setProperty("orderId", ex.getOrderId());
 		problem.setProperty("orderStatus", ex.getStatus());
+		return problem;
+	}
+
+	@ExceptionHandler(IllegalStatusTransitionException.class)
+	ProblemDetail handleIllegalStatusTransition(IllegalStatusTransitionException ex) {
+		ProblemDetail problem = ProblemDetail.forStatusAndDetail(HttpStatus.CONFLICT, ex.getMessage());
+		problem.setType(ILLEGAL_TRANSITION_TYPE);
+		problem.setTitle("Status change not allowed");
+		problem.setProperty("orderId", ex.getOrderId());
+		problem.setProperty("orderStatus", ex.getFrom());
+		problem.setProperty("requestedStatus", ex.getTo());
+		return problem;
+	}
+
+	/** Somebody else changed the order between this request's read and write. Nothing was saved. */
+	@ExceptionHandler(ObjectOptimisticLockingFailureException.class)
+	ProblemDetail handleConcurrentUpdate(ObjectOptimisticLockingFailureException ex) {
+		LOGGER.warn("Concurrent order update rejected: {}", ex.getMessage());
+		ProblemDetail problem = ProblemDetail.forStatusAndDetail(HttpStatus.CONFLICT,
+				"The order was changed by someone else at the same time. Reload it and try again.");
+		problem.setType(CONCURRENT_UPDATE_TYPE);
+		problem.setTitle("Order was changed concurrently");
+		return problem;
+	}
+
+	/** The order names a SKU the shop has no price for. */
+	@ExceptionHandler(UnknownSkuException.class)
+	ProblemDetail handleUnknownSku(UnknownSkuException ex) {
+		ProblemDetail problem = ProblemDetail.forStatusAndDetail(HttpStatus.UNPROCESSABLE_ENTITY, ex.getMessage());
+		problem.setType(UNKNOWN_SKU_TYPE);
+		problem.setTitle("Unknown SKU");
+		problem.setProperty("sku", ex.getSku());
 		return problem;
 	}
 

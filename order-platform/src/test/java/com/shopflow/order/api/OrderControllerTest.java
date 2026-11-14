@@ -6,6 +6,7 @@ import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.BDDMockito.given;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 
 import java.math.BigDecimal;
@@ -22,18 +23,22 @@ import org.springframework.data.domain.PageImpl;
 import org.springframework.data.domain.Pageable;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
+import org.springframework.orm.ObjectOptimisticLockingFailureException;
 import org.springframework.security.oauth2.jwt.JwtDecoder;
 import org.springframework.security.oauth2.server.resource.authentication.JwtAuthenticationConverter;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.assertj.MockMvcTester;
 import org.springframework.test.web.servlet.request.RequestPostProcessor;
 
+import com.shopflow.order.domain.IllegalStatusTransitionException;
+import com.shopflow.order.domain.Order;
 import com.shopflow.order.domain.OrderDetails;
 import com.shopflow.order.domain.OrderDraft;
 import com.shopflow.order.domain.OrderNotFoundException;
 import com.shopflow.order.domain.OrderService;
 import com.shopflow.order.domain.OrderStatus;
 import com.shopflow.order.domain.OrderSummary;
+import com.shopflow.order.domain.UnknownSkuException;
 import com.shopflow.order.infra.ApiVersioningConfig;
 import com.shopflow.order.infra.SecurityConfig;
 import com.shopflow.order.infra.ShopFlowApiVersionResolver;
@@ -56,8 +61,8 @@ class OrderControllerTest {
 	private static final String NEW_ORDER = """
 			{ "customerId": "alice",
 			  "discountCode": "WELCOME",
-			  "lines": [ { "sku": "A", "quantity": 2, "unitPrice": 10.50 },
-			             { "sku": "B", "quantity": 1, "unitPrice": 3.25 } ] }
+			  "lines": [ { "sku": "A", "quantity": 2 },
+			             { "sku": "B", "quantity": 1 } ] }
 			""";
 
 	@Autowired
@@ -157,7 +162,7 @@ class OrderControllerTest {
 	void createWithSeveralMistakesReturns400WithAPerFieldErrorList() {
 		var result = this.mvc.post().uri("/api/orders").with(alice()).contentType(MediaType.APPLICATION_JSON)
 				.content("""
-						{ "customerId": " ", "lines": [ { "sku": "A", "quantity": 0, "unitPrice": 1 } ] }
+						{ "customerId": " ", "lines": [ { "sku": "A", "quantity": 0 } ] }
 						""");
 
 		assertThat(result).hasStatus(HttpStatus.BAD_REQUEST);
@@ -250,7 +255,7 @@ class OrderControllerTest {
 		given(summary.getStatus()).willReturn(OrderStatus.CONFIRMED);
 		given(summary.getCreatedAt()).willReturn(Instant.parse("2026-11-12T10:00:00Z"));
 		given(summary.getTotal()).willReturn(new BigDecimal("24.25"));
-		given(this.orders.search(eq(OrderStatus.CONFIRMED), any(Pageable.class)))
+		given(this.orders.search(eq("alice"), eq(OrderStatus.CONFIRMED), any(Pageable.class)))
 				.willReturn(new PageImpl<>(List.of(summary)));
 
 		var result = this.mvc.get().uri("/api/orders?status=CONFIRMED&size=5").with(alice())
@@ -261,6 +266,27 @@ class OrderControllerTest {
 		assertThat(result).bodyJson().extractingPath("$.content[0].status").isEqualTo("CONFIRMED");
 		assertThat(result).bodyJson().extractingPath("$.content[0].total").isEqualTo(24.25);
 		assertThat(result).bodyJson().extractingPath("$.page.totalElements").isEqualTo(1);
+	}
+
+	@Test
+	void aCustomersListIsRestrictedToTheirOwnOrdersInBothVersions() {
+		given(this.orders.search(eq("alice"), any(), any(Pageable.class))).willReturn(new PageImpl<>(List.of()));
+
+		assertThat(this.mvc.get().uri("/api/orders").with(alice()).header("X-API-Version", "2")).hasStatusOk();
+		assertThat(this.mvc.get().uri("/api/orders").with(alice()).header("X-API-Version", "1")).hasStatusOk();
+
+		verify(this.orders, times(2)).search(eq("alice"), any(), any(Pageable.class));
+		verify(this.orders, never()).search(eq((String) null), any(), any(Pageable.class));
+	}
+
+	@Test
+	void anAdminsListIsNotRestricted() {
+		given(this.orders.search(eq((String) null), any(), any(Pageable.class))).willReturn(new PageImpl<>(List.of()));
+
+		assertThat(this.mvc.get().uri("/api/orders").with(bob()).header("X-API-Version", "2")).hasStatusOk();
+		assertThat(this.mvc.get().uri("/api/orders").with(bob()).header("X-API-Version", "1")).hasStatusOk();
+
+		verify(this.orders, times(2)).search(eq((String) null), any(), any(Pageable.class));
 	}
 
 	@Test
@@ -294,12 +320,51 @@ class OrderControllerTest {
 	}
 
 	@Test
-	void aCustomerMayChangeTheStatusOfTheirOwnOrderToSomethingElse() {
+	void aCustomerCannotChangeTheStatusOfTheirOwnOrderAtAll() {
 		given(this.orders.findById(7L)).willReturn(order(7, "alice", OrderStatus.PENDING_PAYMENT));
-		given(this.orders.updateStatus(7L, OrderStatus.SHIPPED)).willReturn(order(7, "alice", OrderStatus.SHIPPED));
 
-		assertThat(this.mvc.patch().uri("/api/orders/7/status").with(alice()).header("X-API-Version", "2")
-				.contentType(MediaType.APPLICATION_JSON).content("{ \"status\": \"SHIPPED\" }")).hasStatusOk();
+		for (OrderStatus status : OrderStatus.values()) {
+			assertThat(this.mvc.patch().uri("/api/orders/7/status").with(alice()).header("X-API-Version", "2")
+					.contentType(MediaType.APPLICATION_JSON).content("{ \"status\": \"" + status + "\" }"))
+					.hasStatus(HttpStatus.FORBIDDEN);
+		}
+		verify(this.orders, never()).updateStatus(any(Long.class), any());
+	}
+
+	@Test
+	void anIllegalStatusChangeIs409() {
+		given(this.orders.updateStatus(7L, OrderStatus.SHIPPED))
+				.willThrow(new IllegalStatusTransitionException("7", OrderStatus.PENDING_PAYMENT, OrderStatus.SHIPPED));
+
+		var result = this.mvc.patch().uri("/api/orders/7/status").with(bob()).header("X-API-Version", "2")
+				.contentType(MediaType.APPLICATION_JSON).content("{ \"status\": \"SHIPPED\" }");
+
+		assertThat(result).hasStatus(HttpStatus.CONFLICT);
+		assertThat(result).bodyJson().extractingPath("$.orderStatus").isEqualTo("PENDING_PAYMENT");
+		assertThat(result).bodyJson().extractingPath("$.requestedStatus").isEqualTo("SHIPPED");
+	}
+
+	@Test
+	void aConcurrentChangeIs409() {
+		given(this.orders.updateStatus(7L, OrderStatus.CANCELLED))
+				.willThrow(new ObjectOptimisticLockingFailureException(Order.class, 7L));
+
+		var result = this.mvc.patch().uri("/api/orders/7/status").with(bob()).header("X-API-Version", "2")
+				.contentType(MediaType.APPLICATION_JSON).content("{ \"status\": \"CANCELLED\" }");
+
+		assertThat(result).hasStatus(HttpStatus.CONFLICT);
+		assertThat(result).bodyJson().extractingPath("$.title").isEqualTo("Order was changed concurrently");
+	}
+
+	@Test
+	void anUnknownSkuIs422() {
+		given(this.orders.create(any(OrderDraft.class))).willThrow(new UnknownSkuException("NOPE"));
+
+		var result = this.mvc.post().uri("/api/orders").with(alice()).contentType(MediaType.APPLICATION_JSON)
+				.content(NEW_ORDER);
+
+		assertThat(result).hasStatus(HttpStatus.UNPROCESSABLE_ENTITY);
+		assertThat(result).bodyJson().extractingPath("$.sku").isEqualTo("NOPE");
 	}
 
 	@Test

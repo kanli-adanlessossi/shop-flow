@@ -10,7 +10,8 @@
 
   The app needs the Keycloak container from compose.yaml (started with it); k6 signs in as alice.
 
-  Summaries are written to load-tests/results/<tag>.json. Needs Docker, and Java and Maven wrapper
+  Summaries are written to load-tests/results/runs/<timestamp>/<tag>.json (git-ignored; the committed
+  results/vt-*.json are never touched). Needs Docker, and Java and Maven wrapper
   as for a normal local start. Takes about 4 minutes per run.
 
 .PARAMETER Modes     Order of the runs, e.g. off,on,off,on (default). Each entry is 'off' or 'on'.
@@ -27,9 +28,10 @@ param(
 $ErrorActionPreference = 'Continue'
 $root = (Resolve-Path "$PSScriptRoot\..").Path
 $app = Join-Path $root 'order-platform'
-$results = Join-Path $PSScriptRoot 'results'
+# Every invocation writes to its own folder (git-ignored), so it never deletes or overwrites the
+# committed load-tests/results/vt-*.json that docs/NOTES.md cites. Copy files over by hand to update those.
+$results = Join-Path $PSScriptRoot "results\runs\$(Get-Date -Format 'yyyyMMdd-HHmmss')"
 New-Item -ItemType Directory -Force $results | Out-Null
-Get-ChildItem $results -Filter 'vt-*' | Remove-Item -Force   # only this invocation's runs are reported
 # `powershell -File script.ps1 -Modes off,on` delivers one string "off,on", so split it.
 $Modes = @($Modes | ForEach-Object { $_ -split ',' } | Where-Object { $_ })
 

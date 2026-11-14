@@ -18,4 +18,16 @@ import org.springframework.boot.context.properties.bind.DefaultValue;
 public record PaymentWebhookProperties(
 		@DefaultValue("") String webhookSecret,
 		@DefaultValue("5m") Duration webhookTolerance) {
+
+	/** A non-empty secret shorter than this is refused at startup. Use a random value of 32 or more characters. */
+	public static final int MIN_SECRET_LENGTH = 16;
+
+	public PaymentWebhookProperties {
+		// Empty stays allowed: the endpoint then answers 503 (fails closed). A weak secret would be accepted
+		// silently and make the signatures guessable, so it stops the application from starting.
+		if (!webhookSecret.isEmpty() && webhookSecret.length() < MIN_SECRET_LENGTH) {
+			throw new IllegalArgumentException("shopflow.payments.webhook-secret must be empty (webhook disabled) or at least "
+					+ MIN_SECRET_LENGTH + " characters long");
+		}
+	}
 }

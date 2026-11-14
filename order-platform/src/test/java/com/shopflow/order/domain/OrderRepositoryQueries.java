@@ -1,6 +1,7 @@
 package com.shopflow.order.domain;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import java.math.BigDecimal;
 import java.time.Instant;
@@ -12,6 +13,7 @@ import java.util.UUID;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.jpa.test.autoconfigure.TestEntityManager;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.data.domain.Limit;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
@@ -121,6 +123,39 @@ abstract class OrderRepositoryQueries {
 		assertThat(this.orders.findSummariesByStatus(OrderStatus.SHIPPED, PageRequest.of(0, 10)).getContent()).isEmpty();
 	}
 
+	@Test
+	void summariesOfOneCustomerExcludeEveryoneElsesOrdersFromThePageAndTheCount() {
+		Order cheap = save("alice", OrderStatus.PENDING_PAYMENT, BASE, line("A", 1, "1.00"));
+		Order dear = save("alice", OrderStatus.CONFIRMED, BASE, line("B", 2, "5.00"), line("C", 1, "1.00"));
+		save("bob", OrderStatus.PENDING_PAYMENT, BASE, line("A", 9, "9.00"));
+		save("alicia", OrderStatus.PENDING_PAYMENT, BASE);
+
+		Page<OrderSummary> page = this.orders.findSummariesByCustomerId("alice",
+				PageRequest.of(0, 1, Sort.by(Sort.Direction.DESC, "total")));
+
+		assertThat(page.getContent()).extracting(OrderSummary::getId).containsExactly(id(dear));
+		assertThat(page.getContent().get(0).getTotal()).isEqualByComparingTo("11.00");
+		assertThat(page.getTotalElements()).isEqualTo(2);
+		assertThat(this.orders.findSummariesByCustomerId("alice", PageRequest.of(1, 1, Sort.by(Sort.Direction.DESC, "total")))
+				.getContent()).extracting(OrderSummary::getId).containsExactly(id(cheap));
+		assertThat(this.orders.findSummariesByCustomerId("nobody", PageRequest.of(0, 10)).getTotalElements()).isZero();
+	}
+
+	@Test
+	void summariesOfOneCustomerByStatusCombineBothConditions() {
+		Order pending = save("alice", OrderStatus.PENDING_PAYMENT, BASE, line("A", 1, "1.00"));
+		save("alice", OrderStatus.CONFIRMED, BASE, line("A", 1, "1.00"));
+		save("bob", OrderStatus.PENDING_PAYMENT, BASE, line("A", 1, "1.00"));
+
+		Page<OrderSummary> page = this.orders.findSummariesByCustomerIdAndStatus("alice", OrderStatus.PENDING_PAYMENT,
+				PageRequest.of(0, 10, Sort.by("id")));
+
+		assertThat(page.getContent()).extracting(OrderSummary::getId).containsExactly(id(pending));
+		assertThat(page.getTotalElements()).isEqualTo(1);
+		assertThat(this.orders.findSummariesByCustomerIdAndStatus("alice", OrderStatus.SHIPPED, PageRequest.of(0, 10))
+				.getTotalElements()).isZero();
+	}
+
 	// ---- orders to clean up -------------------------------------------------------------
 
 	@Test
@@ -222,6 +257,16 @@ abstract class OrderRepositoryQueries {
 	// ---- helpers ------------------------------------------------------------------------
 
 	/** Saves an order with the given status and creation time, then clears the entity manager. */
+	@Test
+	void theDatabaseRefusesAStatusThatIsNotInTheEnum() {
+		String insert = "insert into orders (customer_id, status, created_at, reservation_id, version) "
+				+ "values ('alice', ?, current_timestamp, ?, 0)";
+		// The same statement with a valid status works, so only the status can make the other one fail.
+		assertThat(this.jdbc.update(insert, "CONFIRMED", "res-ok-status")).isEqualTo(1);
+		assertThatThrownBy(() -> this.jdbc.update(insert, "REFUNDED", "res-bad-status"))
+				.isInstanceOf(DataIntegrityViolationException.class).message().containsIgnoringCase("ck_orders_status");
+	}
+
 	private Order save(String customerId, OrderStatus status, Instant createdAt, OrderLine... lines) {
 		Order order = new Order(customerId, null, UUID.randomUUID().toString());
 		order.setStatus(status);

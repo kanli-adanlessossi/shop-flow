@@ -64,20 +64,27 @@ class Us07CancelUnpaidOrdersStoryTest extends StoryTestSupport {
 	}
 
 	@Test
-	@DisplayName("inventory down: the order stays unpaid and the next run cancels it")
+	@DisplayName("inventory down: the order is cancelled anyway, and the next run completes the release")
 	void inventoryDownThenBack() {
 		long id = idOf(placeAlicesOrder());
+		String reservationId = reservationIdOf(id);
 		createdHoursAgo(id, 2);
 		this.inventory.answerReleasesWith(503);
 
 		this.cleanup.cancelUnpaidOrders();
-		assertThat(statusOf(id)).isEqualTo("PENDING_PAYMENT");
+		assertThat(statusOf(id)).isEqualTo("CANCELLED");
+		assertThat(releasePending(id)).isTrue();
 
 		this.inventory.reset();
 		this.cleanup.cancelUnpaidOrders();
-		assertThat(statusOf(id)).isEqualTo("CANCELLED");
+		assertThat(this.inventory.releaseRequests(reservationId)).isEqualTo(1);
+		assertThat(releasePending(id)).isFalse();
 	}
 
+	private boolean releasePending(long orderId) {
+		return this.jdbc.sql("select stock_release_pending from orders where id = :id").param("id", orderId)
+				.query(Boolean.class).single();
+	}
 	/** There is no API for this: an order's creation time never changes. */
 	private void createdHoursAgo(long orderId, int hours) {
 		this.jdbc.sql("update orders set created_at = :at where id = :id")

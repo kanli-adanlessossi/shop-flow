@@ -138,20 +138,20 @@ abstract class StoryTestSupport {
 
 	// ---- orders -------------------------------------------------------------------------
 
-	/** Order body; each line is "SKU:quantity:unitPrice", e.g. "A:2:10.50". */
+	/** Order body; each line is "SKU:quantity", e.g. "A:2". Prices come from the price list seeded by afterMigrate__test_sku_prices.sql (A 10.50, B 3.25, C 0.50, POISON 66.66). */
 	static String orderJson(String customerId, String... lines) {
 		StringBuilder json = new StringBuilder("{ \"customerId\": \"" + customerId + "\", \"lines\": [");
 		for (int i = 0; i < lines.length; i++) {
 			String[] parts = lines[i].split(":");
 			json.append(i == 0 ? "" : ",").append("{ \"sku\": \"").append(parts[0]).append("\", \"quantity\": ")
-					.append(parts[1]).append(", \"unitPrice\": ").append(parts[2]).append(" }");
+					.append(parts[1]).append(" }");
 		}
 		return json.append("] }").toString();
 	}
 
-	/** Places an order as alice: 2 x A at 10.50 + 1 x B at 3.25 = 24.25. */
+	/** Places an order as alice: 2 x A (10.50) + 1 x B (3.25) = 24.25. */
 	OrderV2 placeAlicesOrder() {
-		return placeOrder(alice(), orderJson("alice", "A:2:10.50", "B:1:3.25"));
+		return placeOrder(alice(), orderJson("alice", "A:2", "B:1"));
 	}
 
 	OrderV2 placeOrder(String token, String json) {

@@ -86,7 +86,7 @@ The duplicate-key request:
 
 ```json
 { "customerId": "a", "customerId": "b",
-  "lines": [ { "sku": "A", "quantity": 1, "unitPrice": 1 } ] }
+  "lines": [ { "sku": "A", "quantity": 1 } ] }
 ```
 
 With the feature on, the response is the same generic body as any unreadable request. The message
@@ -445,8 +445,13 @@ clients).
 
 `shopflow-web` is a public client (no secret) with the password grant for tools and tests and the
 authorization-code flow with PKCE for a browser front end. `shopflow-service` is confidential and
-can only use client credentials. All credentials are for local development; the realm file is
-imported by compose.yaml and by the Keycloak test container, so both use the same one.
+can only use client credentials. **All of these credentials are for local development and tests
+only**, as the realm's display name and `order-platform/keycloak/README.md` say: weak passwords, a
+committed client secret, plain HTTP (`sslRequired: none`), the password grant and wide redirect URIs.
+The same holds for the Keycloak admin `admin`/`admin` and the Postgres password in
+`order-platform/compose.yaml`. A real deployment uses its own realm with secrets from the environment
+or a vault. The realm file is imported by compose.yaml and by the Keycloak test container, so both use
+the same one.
 
 ### Roles
 
@@ -541,9 +546,9 @@ which reads the order through `OrderService.findById` and therefore normally hit
 | `POST /api/orders` | only with `customerId` = own name | for anyone |
 | `GET /api/orders/{id}` | own orders | all |
 | `PUT /api/orders/{id}` | own orders, and `customerId` must stay the own name | all |
-| `PATCH /api/orders/{id}/status` | own orders, any status **except** `CANCELLED` | all, including cancelling |
+| `PATCH /api/orders/{id}/status` | 403 | yes: `PENDING_PAYMENT` to `CANCELLED`, `CONFIRMED` to `SHIPPED`, else 409 |
 | `DELETE /api/orders/{id}` | own orders | all |
-| `GET /api/orders` (list) | **all orders** (not restricted yet) | all |
+| `GET /api/orders` (list) | own orders only (list and count) | all |
 | `GET /api/admin/reports/daily-sales` | 403 | yes |
 | `GET /api/health-info` | yes | yes |
 
@@ -554,12 +559,11 @@ domain, and answer 409):
 ADMIN              = "hasRole('ADMIN')"
 OWNER              = "@orderAccess.isOwner(#id, authentication)"
 CUSTOMER_IS_CALLER = "#request.customerId() == authentication.name"
-NOT_A_CANCEL       = "#request.status() != T(...OrderStatus).CANCELLED"
 
 create  = ADMIN or CUSTOMER_IS_CALLER
 read    = ADMIN or OWNER                (also delete)
 replace = ADMIN or (OWNER and CUSTOMER_IS_CALLER)
-status  = ADMIN or (OWNER and NOT_A_CANCEL)
+status  = ADMIN                         (the transition table is in OrderService.updateStatus)
 ```
 
 Details that matter:
@@ -573,9 +577,11 @@ Details that matter:
 - **The rules sit on the controller, not on `OrderService`.** The scheduled clean-up of unpaid
   orders (`UnpaidOrderCleanup`) and the payment webhook change orders without a signed-in user;
   `@PreAuthorize` on the service would refuse them.
-- **The list is not filtered by owner** (open criterion of US-3 in `docs/user-stories.md`, with a
-  disabled test). `@PreAuthorize` with `#id` cannot cover a list; it needs a `customerId` condition
-  in the two list queries.
+- **The list is filtered by owner in the query.** `@PreAuthorize` with `#id` cannot cover a list, so
+  `OrderController` passes `null` for an admin and `authentication.name` for everyone else to
+  `OrderService.search`, which picks one of four queries (all, by status, by customer, by customer
+  and status). Each has its own `where` clause instead of `(:customerId is null or ...)`, which
+  PostgreSQL cannot type for an untyped null. The count query carries the same condition.
 - **`customerId` is the Keycloak username**, so renaming a user in Keycloak would cut them off from
   their orders. The stable alternative is the subject (`sub`, a UUID), which would need a
   migration of existing orders and of every client that sends `customerId`.
@@ -595,7 +601,67 @@ Details that matter:
 - **No audience check.** Setting `spring.security.oauth2.resourceserver.jwt.audiences` (and an
   audience mapper in Keycloak) would limit the API to tokens meant for it.
 - **`customer` is not enforced**, see Roles.
-- **The list endpoints show every customer's orders.**
 - **Multi-factor sign-in** belongs in Keycloak (for example OTP for admins); the API could then
   require it by checking `acr`/`amr` claims on admin paths. Not set up; see the Spring Security 7
   MFA and passkey features, which are built for apps with their own login, not resource servers.
+
+---
+
+## Order integrity: prices, status moves, stock release, concurrent changes
+
+- **Prices are the server's.** `OrderService` prices each line from the `sku_prices` table (Flyway
+  `V9`); a `unitPrice` in a request body is ignored (unknown JSON properties are not rejected). An
+  unknown SKU is 422 and is rejected before stock is reserved. The price is copied into
+  `order_lines.unit_price`, so `confirmPayment` still compares the webhook amount with the stored
+  total. Prices are maintained with SQL; there is no admin endpoint. The `dev` profile also loads
+  `db/dev/afterMigrate__dev_sku_prices.sql` (`SKU-001` to `SKU-008`, the SKUs of
+  `load-tests/place-orders.js`, which still sends a `unitPrice` that is now ignored). Tests load
+  `afterMigrate__test_sku_prices.sql` from the test resources (A, B, C, POISON). To add a price:
+  `insert into sku_prices (sku, unit_price) values ('SKU-009', 12.50);`.
+- **Status moves are a table**, in `OrderService.updateStatus`: `PENDING_PAYMENT` to `CANCELLED` and
+  `CONFIRMED` to `SHIPPED`; anything else is `IllegalStatusTransitionException` (409). The endpoint is
+  admin only. `CONFIRMED` is set only by `confirmPayment`; the scheduled cleanup cancels through
+  `cancelIfStillUnpaid`. Cancelling a `CONFIRMED` order is refused because no refund path exists.
+- **Stock is released after commit** (`releaseAfterCommit`, a transaction synchronization) on admin
+  cancel and on delete, so a rolled-back change never releases stock. Releasing is idempotent at
+  inventory, so deleting an already cancelled order releases once more.
+- **Optimistic locking.** `Order` has a `@Version` column (`V8`). Two writers that read the same
+  version cannot both commit: the loser gets `ObjectOptimisticLockingFailureException`, answered
+  409. A webhook that loses rolls back its inbox row and outbox event, so the provider's retry runs
+  again. The scheduled cleanup logs and skips an order it loses. There is no retry loop, since a
+  client or provider retry is the natural one. `OrderConcurrencyStoryTest` forces the race.
+- **Replace keeps the reservation in step with the lines** (`OrderService.replace`). If the SKUs or
+  quantities (summed per SKU) change, the new lines are reserved under a fresh key outside any
+  transaction, then one transaction swaps the order's `reservation_id` and registers the release of
+  the old key after commit. Reserve first, release second: the order is never under-reserved, a
+  refused or failed change leaves the order and its old reservation untouched, and a failed commit
+  releases the new key. The cost: the new lines must fit next to the old ones for a moment, so a
+  replace near an empty shelf can be refused (409) although the net change would fit. Replacing only
+  the customer or discount code does not call inventory. `orders.reservation_id` is therefore no
+  longer `updatable = false` on the entity (no schema change).
+- **Cleanup cancels first, then releases** (`UnpaidOrderCleanup`). `cancelIfStillUnpaid` checks the
+  status, cancels, writes the event and sets `orders.stock_release_pending` (Flyway `V10`) in one
+  transaction. The release follows, and `stockReleased` clears the flag (a bulk update, so the
+  version is not bumped and no concurrent change is refused). If inventory is down the order stays
+  cancelled with the flag set, and every run retries flagged orders before it cancels new ones. A
+  payment landing after the cancel is a late payment, so a confirmed order without a reservation can
+  no longer happen. Only the cleanup job sets the flag; releases after an admin cancel or a delete
+  stay best effort (`ReservationRelease`). Behaviour change: with inventory down, an unpaid order is
+  now cancelled (and the customer told) before its stock is back; it used to stay unpaid until
+  inventory answered.
+- **Cache eviction runs after the commit** (`CacheConfig`). `@EnableCaching(order = LOWEST_PRECEDENCE - 100)`
+  puts the cache advice outside the transaction advice (which keeps the default
+  `LOWEST_PRECEDENCE`), so `@CacheEvict` on a `@Transactional` method evicts after the commit. Before,
+  both advisors had the same order and which one ran outside was not defined. `replace` runs its
+  transactions through `TransactionOperations` inside the method, so its eviction follows them too.
+  `CacheEvictionAfterCommitTest` checks the order.
+- **A relay run is bounded** (`OutboxRelay.MAX_RUN`, 60 s by the injected clock). The loop stops
+  starting sends after 60 s; with the 5 s send timeout a run ends within about 65 s, inside the
+  2 minute ShedLock lease, so a second instance cannot start while this one still sends. The rest of
+  the batch goes out on the next run (every second), still in id order. `OutboxRelayRunLimitTest`
+  drives the clock from a fake broker.
+- **inventory-service is a placeholder.** The module in this repo has no endpoints yet; order-platform
+  is only ever run and tested against the WireMock stand-in (`deploy/wiremock/inventory`), whose stubs
+  are the contract. Where these notes say "inventory-service" they mean that contract.
+  `inventory-service/README.md` says so, and the module now listens on 8081 (the port
+  `shopflow.inventory.base-url` points at) so it cannot clash with order-platform on 8080.

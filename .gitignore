@@ -25,3 +25,5 @@ replay_pid*
 
 # Maven build output (the parent and every module)
 target/
+# Output of load-tests/compare-virtual-threads.ps1 (summaries, app logs); the committed results/vt-*.json stay
+load-tests/results/runs/
