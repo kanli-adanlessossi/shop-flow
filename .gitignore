@@ -27,3 +27,6 @@ replay_pid*
 target/
 # Output of load-tests/compare-virtual-threads.ps1 (summaries, app logs); the committed results/vt-*.json stay
 load-tests/results/runs/
+
+# Local git worktrees (created by workflows); never committed
+.worktrees/

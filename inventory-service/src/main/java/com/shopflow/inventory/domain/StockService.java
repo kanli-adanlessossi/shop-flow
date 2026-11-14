@@ -38,12 +38,16 @@ public class StockService {
 	 * Takes the stock of every line, all or nothing. Repeating a reservation id changes nothing and
 	 * succeeds, so a caller may retry after a timeout. Lines with the same SKU are added up.
 	 *
+	 * @throws ReservationReleasedException if this id was released earlier
 	 * @throws InsufficientStockException if any SKU is unknown or has too few units; the transaction
 	 * rolls back, so no line changes
 	 */
 	@Transactional
 	public void reserve(String reservationId, List<StockLine> requested) {
 		if (this.reservations.insertIfAbsent(reservationId) == 0) {
+			if (this.reservations.findById(reservationId).filter(r -> r.getStatus() == ReservationStatus.RELEASED).isPresent()) {
+				throw new ReservationReleasedException(reservationId);
+			}
 			LOGGER.debug("Reservation {} already exists, nothing to do", reservationId);
 			return;
 		}
@@ -68,6 +72,7 @@ public class StockService {
 	@Transactional
 	public void release(String reservationId) {
 		Reservation reservation = this.reservations.findForUpdate(reservationId)
+				.filter(r -> r.getStatus() != ReservationStatus.RELEASED) // already released: same as unknown
 				.orElseThrow(() -> new ReservationNotFoundException(reservationId));
 		if (reservation.getStatus() == ReservationStatus.SHIPPED) {
 			throw new ReservationShippedException(reservationId);
@@ -99,7 +104,7 @@ public class StockService {
 			this.stock.increment(line.getSku(), line.getQuantity());
 		}
 		this.lines.deleteByReservation(reservationId);
-		this.reservations.delete(reservation);
+		this.reservations.markReleased(reservationId);
 	}
 
 	/**
@@ -112,7 +117,15 @@ public class StockService {
 	public boolean confirm(String reservationId) {
 		boolean changed = this.reservations.markConfirmed(reservationId) == 1;
 		if (!changed) {
-			LOGGER.info("Reservation {} not confirmed: unknown or already past HELD", reservationId);
+			// Unknown can mean the hold expired before the payment arrived: the order is confirmed but its stock
+			// is no longer reserved. That needs attention, so it is not logged at INFO.
+			if (this.reservations.findById(reservationId).filter(r -> r.getStatus() != ReservationStatus.RELEASED).isPresent()) {
+				LOGGER.info("Reservation {} not confirmed: already past HELD", reservationId);
+			}
+			else {
+				LOGGER.warn("Reservation {} not confirmed: it does not exist (expired or released?); the order may be "
+						+ "confirmed without reserved stock", reservationId);
+			}
 		}
 		return changed;
 	}

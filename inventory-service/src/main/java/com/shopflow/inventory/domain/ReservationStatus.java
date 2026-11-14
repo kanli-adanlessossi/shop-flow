@@ -10,6 +10,9 @@ public enum ReservationStatus {
 	CONFIRMED,
 
 	/** The goods left. The stock is gone for good, so the reservation can no longer be released. */
-	SHIPPED
+	SHIPPED,
+
+	/** The stock was given back. Only a marker, kept for a while so the same id cannot reserve again. */
+	RELEASED
 
 }

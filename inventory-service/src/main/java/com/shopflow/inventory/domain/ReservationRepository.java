@@ -9,6 +9,7 @@ import org.springframework.data.jpa.repository.Lock;
 import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
+import org.springframework.transaction.annotation.Transactional;
 
 import jakarta.persistence.LockModeType;
 
@@ -42,6 +43,17 @@ public interface ReservationRepository extends JpaRepository<Reservation, String
 			""", nativeQuery = true)
 	int markShipped(@Param("id") String id);
 
+	/** Marks the reservation RELEASED (its stock was given back). */
+	@Modifying(clearAutomatically = true, flushAutomatically = true)
+	@Query(value = "update reservation set status = 'RELEASED', updated_at = now() where reservation_id = :id", nativeQuery = true)
+	int markReleased(@Param("id") String id);
+
+	/** Deletes RELEASED markers last changed before the cutoff. Returns how many. */
+	@Transactional
+	@Modifying(clearAutomatically = true, flushAutomatically = true)
+	@Query(value = "delete from reservation where status = 'RELEASED' and updated_at < :cutoff", nativeQuery = true)
+	int deleteReleasedBefore(@Param("cutoff") Instant cutoff);
+
 	/** Locks the row so a release cannot interleave with a status change of the same reservation. */
 	@Lock(LockModeType.PESSIMISTIC_WRITE)
 	@Query("select r from Reservation r where r.reservationId = :id")
