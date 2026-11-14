@@ -1,0 +1,7 @@
+{
+  "task_id": "inventory-service-prod",
+  "task_description": "Turn inventory-service (currently a placeholder at HEAD 7e74216) into a production-style service: own Postgres, JPA+Flyway, atomic reservations with HELD/CONFIRMED/SHIPPED lifecycle, OAuth2 resource server (role inventory), Kafka consumer of order-events (confirmed/shipped) with inbox/retry/DLT, ShedLock expiry job; order-platform gets order.shipped + reservationId on order.confirmed + client-credentials token on the inventory client; shared root compose.yaml; docs and contract test.",
+  "status": "pending",
+  "feature_order": ["FEAT-001", "FEAT-002", "FEAT-003", "FEAT-004"],
+  "blocked_reason": null
+}

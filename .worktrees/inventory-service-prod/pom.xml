@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  ShopFlow parent: builds every module in one reactor and holds what they share.
+
+    ./mvnw verify                                  everything: compile, all tests, package
+    ./mvnw -pl order-platform verify               one module
+    ./mvnw -pl order-platform spring-boot:run      run the app (from this directory)
+
+  Shared settings live in .mvn/ next to this file (Maven reads .mvn only from the top-level
+  project): jvm.config carries the JDK flags Error Prone needs, wrapper/ pins the Maven version.
+-->
+<project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+	xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+	<modelVersion>4.0.0</modelVersion>
+	<parent>
+		<groupId>org.springframework.boot</groupId>
+		<artifactId>spring-boot-starter-parent</artifactId>
+		<version>4.1.2</version>
+		<relativePath/> <!-- lookup parent from repository -->
+	</parent>
+	<groupId>com.shopflow</groupId>
+	<artifactId>shop-flow</artifactId>
+	<version>0.0.1-SNAPSHOT</version>
+	<packaging>pom</packaging>
+	<name>shop-flow</name>
+	<description>Parent and aggregator of the ShopFlow modules</description>
+
+	<modules>
+		<module>order-platform</module>
+		<module>inventory-service</module>
+		<module>shopflow-starter</module>
+	</modules>
+
+	<properties>
+		<java.version>25</java.version>
+	</properties>
+
+</project>
