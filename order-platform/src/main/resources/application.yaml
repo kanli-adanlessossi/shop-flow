@@ -41,6 +41,19 @@ spring:
         spring.json.trusted.packages: com.shopflow.order.events
   security:
     oauth2:
+      client:
+        # How this service signs in at inventory-service: client-credentials grant as the shopflow-service
+        # client (realm role "inventory"). The explicit token-uri means startup does not need Keycloak.
+        # The secret has no default: set SHOPFLOW_INVENTORY_CLIENT_SECRET (the dev profile has the dev one).
+        registration:
+          inventory:
+            provider: inventory
+            client-id: shopflow-service
+            client-secret: ${SHOPFLOW_INVENTORY_CLIENT_SECRET:}
+            authorization-grant-type: client_credentials
+        provider:
+          inventory:
+            token-uri: ${SHOPFLOW_TOKEN_URI:http://localhost:8180/realms/shopflow/protocol/openid-connect/token}
       resourceserver:
         jwt:
           # Keycloak realm from the root compose.yaml. Boot reads the realm's discovery document and keys
@@ -109,8 +122,8 @@ shopflow:
     webhook-secret: ${PAYMENT_WEBHOOK_SECRET:}
     webhook-tolerance: 5m # how far a webhook's timestamp may differ from this server's clock
   inventory:
-    # Locally the WireMock stand-in (deploy/wiremock); the inventory-service module is still a placeholder
-    # without stock endpoints (inventory-service/README.md).
+    # The real inventory-service (port 8081). For failure drills the WireMock stand-in (deploy/wiremock)
+    # can take its place; it ignores the Bearer token.
     base-url: http://localhost:8081
     connect-timeout: 1s
     read-timeout: 500ms

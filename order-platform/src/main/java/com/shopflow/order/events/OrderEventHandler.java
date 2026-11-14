@@ -39,6 +39,11 @@ public class OrderEventHandler {
 					unknown.fields().keySet());
 			return;
 		}
+		if (event.payload() instanceof OrderShipped) {
+			// Meant for inventory-service. Nothing to do here, so nothing is recorded in the inbox.
+			LOGGER.debug("Ignoring event {} ({}): not for notifications", event.eventId(), event.type());
+			return;
+		}
 		if (!this.processed.markProcessed(CONSUMER, event.eventId())) {
 			LOGGER.info("Ignoring duplicate delivery of event {} ({})", event.eventId(), event.type());
 			return;

@@ -69,4 +69,17 @@ public class KeycloakTestcontainersConfiguration {
 				() -> keycloak.getIssuerUrl(REALM));
 	}
 
+	/**
+	 * Where the app signs in as {@code shopflow-service} to call inventory: the container's token
+	 * endpoint and the realm's client secret. Story tests, which call the real client, get real tokens.
+	 */
+	@Bean
+	DynamicPropertyRegistrar inventoryClientCredentials(KeycloakContainer keycloak) {
+		return (registry) -> {
+			registry.add("spring.security.oauth2.client.provider.inventory.token-uri",
+					() -> keycloak.getIssuerUrl(REALM) + "/protocol/openid-connect/token");
+			registry.add("spring.security.oauth2.client.registration.inventory.client-secret", () -> SERVICE_SECRET);
+		};
+	}
+
 }

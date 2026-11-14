@@ -19,6 +19,7 @@ class LoggingNotificationSender implements NotificationSender {
 					confirmed.customerId(), confirmed.orderId(), confirmed.total(), idempotencyKey);
 			case OrderCancelled cancelled -> LOGGER.info("Notice to customer {}: order {} cancelled, reason {} (key {})",
 					cancelled.customerId(), cancelled.orderId(), cancelled.reason(), idempotencyKey);
+			case OrderShipped shipped -> throw new IllegalArgumentException("Customers are not notified of shipping");
 			case UnknownPayload unknown -> throw new IllegalArgumentException("Nothing to send for an unknown event");
 		}
 	}

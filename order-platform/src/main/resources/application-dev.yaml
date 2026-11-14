@@ -6,6 +6,14 @@ shopflow:
     # Never use this value anywhere else.
     webhook-secret: dev-only-webhook-secret
 spring:
+  security:
+    oauth2:
+      client:
+        registration:
+          inventory:
+            # Local development only: the secret of the shopflow-service client in the dev realm
+            # (keycloak/shopflow-realm.json). Never use this value anywhere else.
+            client-secret: shopflow-service-secret
   flyway:
     # Adds the development price list (SKU-001..SKU-008) from db/dev. Other profiles never load it.
     locations: classpath:db/migration,classpath:db/dev
