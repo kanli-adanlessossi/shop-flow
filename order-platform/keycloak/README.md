@@ -1,6 +1,6 @@
 # Keycloak realm: DEVELOPMENT AND TESTS ONLY
 
-`shopflow-realm.json` is imported by `order-platform/compose.yaml` (local runs) and by the Keycloak
+`shopflow-realm.json` is imported by the root `compose.yaml` (local runs) and by the Keycloak
 test container. It is deliberately insecure and must never be imported into a shared or production
 Keycloak:
 
@@ -12,8 +12,8 @@ Keycloak:
 | client `shopflow-web` | `directAccessGrantsEnabled: true` | password grant, kept for tools and tests |
 | client `shopflow-web` | `redirectUris: http://localhost:*`, `webOrigins: +` | any local port is accepted |
 
-The same applies to `order-platform/compose.yaml`: Keycloak admin `admin`/`admin` and the Postgres
-password `shopflow`.
+The same applies to the root `compose.yaml`: Keycloak admin `admin`/`admin` and the Postgres
+passwords `shopflow` and `inventory`.
 
 For any other environment create the realm separately: HTTPS required, no password grant, exact
 redirect URIs and web origins, generated client secrets and user credentials supplied from the

@@ -8,7 +8,7 @@
   of threads serve requests, runs a short unrecorded warm-up, then the measured run. k6 runs in
   Docker. WireMock stands in for inventory-service on :8081 (answering normally).
 
-  The app needs the Keycloak container from compose.yaml (started with it); k6 signs in as alice.
+  The app needs the Keycloak container from the root compose.yaml (started with it); k6 signs in as alice.
 
   Summaries are written to load-tests/results/runs/<timestamp>/<tag>.json (git-ignored; the committed
   results/vt-*.json are never touched). Needs Docker, and Java and Maven wrapper
@@ -74,7 +74,7 @@ foreach ($mode in $Modes) {
 
   Stop-App
   Push-Location $app
-  docker compose down -v 2>&1 | Out-Null
+  docker compose -f "$root\compose.yaml" --profile orders down -v 2>&1 | Out-Null
   $log = Join-Path $results "$tag-app.log"
   # The one Maven wrapper is in the repo root; started in order-platform/ it builds just that module.
   $proc = Start-Process -FilePath "$root\mvnw.cmd" -WorkingDirectory $app -WindowStyle Hidden -PassThru `
@@ -106,7 +106,7 @@ foreach ($mode in $Modes) {
 }
 
 docker compose -f "$root\deploy\wiremock\compose.yaml" down | Out-Null
-Push-Location $app; docker compose down -v 2>&1 | Out-Null; Pop-Location
+Push-Location $app; docker compose -f "$root\compose.yaml" --profile orders down -v 2>&1 | Out-Null; Pop-Location
 
 "`n== results"
 foreach ($f in Get-ChildItem $results -Filter 'vt-*.json' | Sort-Object Name) {

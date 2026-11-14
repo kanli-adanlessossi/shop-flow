@@ -17,7 +17,7 @@ import org.springframework.boot.SpringApplication;
  *
  * <p>What differs from {@code ./mvnw -pl order-platform spring-boot:run}:
  * <ul>
- * <li>Docker Compose support is switched off, so compose.yaml is not started as well (its Kafka and
+ * <li>Docker Compose support is switched off, so the root compose.yaml is not started as well (its Kafka and
  * Keycloak would compete for ports 9092 and 8180).</li>
  * <li>Keycloak is bound to the fixed host port 8180, so http/shopflow-api.http, the k6 load test and
  * the scripts work unchanged (alice/alice-pass, bob/bob-pass, the shopflow-service client).

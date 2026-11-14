@@ -13,7 +13,7 @@ with no configuration. The payment stub is not used by the app yet. Its request 
 is invented, so change `payments/mappings/callback-verify.json` to match the real provider.
 
 The compose file is here, outside `order-platform/`, on purpose. Spring Boot's Docker Compose
-support starts everything in `order-platform/compose.yaml` on every run, and these containers
+support starts everything in the root `compose.yaml` on every run, and these containers
 should only run when you want them.
 
 ## Start and stop

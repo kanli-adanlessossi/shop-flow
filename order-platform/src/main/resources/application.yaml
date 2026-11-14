@@ -9,9 +9,17 @@ spring:
   threads:
     virtual:
       enabled: true
+  docker:
+    compose:
+      # Shared infrastructure lives in the root compose.yaml. start-only: stopping this app must not
+      # stop the Kafka and Keycloak that inventory-service uses too. The profile picks this app's database.
+      file: ../compose.yaml
+      lifecycle-management: start-only
+      profiles:
+        active: orders
   kafka:
     # Docker Compose support does not configure Kafka (Boot 4.1.2 has no connection-details
-    # factory for it), so the broker from compose.yaml is addressed by its fixed host port.
+    # factory for it), so the broker from the root compose.yaml is addressed by its fixed host port.
     bootstrap-servers: localhost:9092
     listener:
       # One span per received record, continuing the trace from the record's traceparent header.
@@ -35,7 +43,7 @@ spring:
     oauth2:
       resourceserver:
         jwt:
-          # Keycloak realm from compose.yaml. Boot reads the realm's discovery document and keys
+          # Keycloak realm from the root compose.yaml. Boot reads the realm's discovery document and keys
           # on the first request that carries a token, not at startup, so the app starts without
           # Keycloak; tokens are rejected until it is reachable. Tokens must have this exact "iss".
           issuer-uri: ${SHOPFLOW_ISSUER_URI:http://localhost:8180/realms/shopflow}

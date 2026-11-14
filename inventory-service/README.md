@@ -11,7 +11,7 @@ with no controllers: it exposes none of the stock endpoints that order-platform 
 - **Port.** `server.port=8081`, the port order-platform expects, so the module does not clash with
   order-platform on 8080. It cannot run at the same time as the WireMock stand-in, which uses 8081 too.
 - **When docs say "inventory-service"** (`docs/user-stories.md`, `docs/NOTES.md`,
-  `order-platform/compose.yaml`) they mean whatever answers that contract, today the stand-in.
+  the root `compose.yaml`) they mean whatever answers that contract, today the stand-in.
 
 To make it real, implement the endpoints the stubs describe and add a contract test that runs the
 same requests against both.

@@ -448,8 +448,8 @@ authorization-code flow with PKCE for a browser front end. `shopflow-service` is
 can only use client credentials. **All of these credentials are for local development and tests
 only**, as the realm's display name and `order-platform/keycloak/README.md` say: weak passwords, a
 committed client secret, plain HTTP (`sslRequired: none`), the password grant and wide redirect URIs.
-The same holds for the Keycloak admin `admin`/`admin` and the Postgres password in
-`order-platform/compose.yaml`. A real deployment uses its own realm with secrets from the environment
+The same holds for the Keycloak admin `admin`/`admin` and the Postgres passwords in
+the root `compose.yaml`. A real deployment uses its own realm with secrets from the environment
 or a vault. The realm file is imported by compose.yaml and by the Keycloak test container, so both use
 the same one.
 
