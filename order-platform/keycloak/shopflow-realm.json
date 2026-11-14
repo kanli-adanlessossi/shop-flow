@@ -1,7 +1,7 @@
 {
   "realm": "shopflow",
   "enabled": true,
-  "displayName": "ShopFlow",
+  "displayName": "ShopFlow (DEV ONLY - insecure test realm, see keycloak/README.md)",
   "sslRequired": "none",
   "registrationAllowed": false,
   "loginWithEmailAllowed": true,

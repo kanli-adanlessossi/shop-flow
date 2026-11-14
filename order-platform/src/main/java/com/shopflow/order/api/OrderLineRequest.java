@@ -1,14 +1,10 @@
 package com.shopflow.order.api;
 
-import java.math.BigDecimal;
-
-import jakarta.validation.constraints.Digits;
 import jakarta.validation.constraints.NotBlank;
-import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.Positive;
 
+/** One line of an order request. The unit price is not part of it: the server sets it. */
 public record OrderLineRequest(
 		@NotBlank String sku,
-		@Positive int quantity,
-		@NotNull @Positive @Digits(integer = 10, fraction = 2) BigDecimal unitPrice) {
+		@Positive int quantity) {
 }

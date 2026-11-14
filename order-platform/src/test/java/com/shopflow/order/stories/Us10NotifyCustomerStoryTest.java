@@ -91,7 +91,7 @@ class Us10NotifyCustomerStoryTest extends StoryTestSupport {
 		}).when(this.notifications).send(anyString(), any());
 		double deadLettersBefore = deadLetterCount();
 
-		long poisoned = idOf(placeOrder(alice(), orderJson("alice", "A:1:66.66")));
+		long poisoned = idOf(placeOrder(alice(), orderJson("alice", "POISON:1")));
 		long healthy = idOf(placeAlicesOrder());
 
 		// Non-blocking retries: the healthy order is not held up behind the failing one.

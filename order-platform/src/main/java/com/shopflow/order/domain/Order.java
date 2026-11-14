@@ -18,6 +18,7 @@ import jakarta.persistence.GenerationType;
 import jakarta.persistence.Id;
 import jakarta.persistence.OneToMany;
 import jakarta.persistence.Table;
+import jakarta.persistence.Version;
 
 /**
  * An order placed by a customer. Lines are owned by the order: they are saved
@@ -31,6 +32,10 @@ public class Order {
 	@GeneratedValue(strategy = GenerationType.IDENTITY)
 	private @Nullable Long id;
 
+	/** Optimistic lock: a save based on a stale read fails instead of overwriting a concurrent change. */
+	@Version
+	private long version;
+
 	@Column(nullable = false)
 	private String customerId;
 
@@ -38,9 +43,19 @@ public class Order {
 	@Column(nullable = false)
 	private OrderStatus status = OrderStatus.PENDING_PAYMENT;
 
-	/** The key the order's stock was reserved under at inventory-service. Never changes. */
-	@Column(nullable = false, updatable = false)
+	/**
+	 * The key the order's stock is reserved under at inventory-service. Changes only when the order's
+	 * lines are replaced with different SKUs or quantities (a new reservation takes over from the old one).
+	 */
+	@Column(nullable = false, length = 64)
 	private String reservationId;
+
+	/**
+	 * Set when the unpaid-order job cancelled the order and has not yet seen inventory confirm the release
+	 * of its stock. The job retries until it clears the flag.
+	 */
+	@Column(nullable = false)
+	private boolean stockReleasePending;
 
 	private @Nullable String discountCode;
 
@@ -103,6 +118,18 @@ public class Order {
 
 	public String getReservationId() {
 		return this.reservationId;
+	}
+
+	public void setReservationId(String reservationId) {
+		this.reservationId = reservationId;
+	}
+
+	public boolean isStockReleasePending() {
+		return this.stockReleasePending;
+	}
+
+	public void setStockReleasePending(boolean stockReleasePending) {
+		this.stockReleasePending = stockReleasePending;
 	}
 
 	public OrderStatus getStatus() {

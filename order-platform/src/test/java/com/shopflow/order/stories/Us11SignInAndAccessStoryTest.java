@@ -32,7 +32,7 @@ class Us11SignInAndAccessStoryTest extends StoryTestSupport {
 	@DisplayName("customers work on their own orders; admins on everything")
 	void rolesAndOwnership() {
 		long alicesOrder = idOf(placeAlicesOrder());
-		long bobsOrder = idOf(placeOrder(bob(), orderJson("bob", "A:1:1.00")));
+		long bobsOrder = idOf(placeOrder(bob(), orderJson("bob", "A:1")));
 
 		get(alice(), "/api/orders/{id}", bobsOrder).expectStatus().isForbidden();
 		get(bob(), "/api/orders/{id}", alicesOrder).expectStatus().isOk();

@@ -63,8 +63,8 @@ class OrderApiIntegrationTest {
 
 	private static final String NEW_ORDER = """
 			{ "customerId": "alice",
-			  "lines": [ { "sku": "A", "quantity": 2, "unitPrice": 10.50 },
-			             { "sku": "B", "quantity": 1, "unitPrice": 3.25 } ] }
+			  "lines": [ { "sku": "A", "quantity": 2 },
+			             { "sku": "B", "quantity": 1 } ] }
 			""";
 
 	@Autowired

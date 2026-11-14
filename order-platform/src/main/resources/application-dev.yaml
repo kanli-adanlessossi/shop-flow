@@ -5,3 +5,7 @@ shopflow:
     # Local development only, so http/send-payment-webhook.ps1 works without extra setup.
     # Never use this value anywhere else.
     webhook-secret: dev-only-webhook-secret
+spring:
+  flyway:
+    # Adds the development price list (SKU-001..SKU-008) from db/dev. Other profiles never load it.
+    locations: classpath:db/migration,classpath:db/dev

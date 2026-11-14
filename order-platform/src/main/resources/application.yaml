@@ -101,6 +101,8 @@ shopflow:
     webhook-secret: ${PAYMENT_WEBHOOK_SECRET:}
     webhook-tolerance: 5m # how far a webhook's timestamp may differ from this server's clock
   inventory:
+    # Locally the WireMock stand-in (deploy/wiremock); the inventory-service module is still a placeholder
+    # without stock endpoints (inventory-service/README.md).
     base-url: http://localhost:8081
     connect-timeout: 1s
     read-timeout: 500ms

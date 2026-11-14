@@ -19,7 +19,7 @@ class Us02PlaceOrderStoryTest extends StoryTestSupport {
 	@Test
 	@DisplayName("the order is created waiting for payment, with totals and a Location")
 	void anOrderIsCreated() {
-		var result = post(alice(), "/api/orders", orderJson("alice", "A:2:10.50", "B:1:3.25"))
+		var result = post(alice(), "/api/orders", orderJson("alice", "A:2", "B:1"))
 				.expectStatus().isCreated()
 				.expectHeader().exists(HttpHeaders.LOCATION)
 				.expectBody(OrderV2.class).returnResult();
@@ -60,7 +60,7 @@ class Us02PlaceOrderStoryTest extends StoryTestSupport {
 		this.inventory.answerReservationsWith(409);
 		long before = orderCount();
 
-		post(alice(), "/api/orders", orderJson("alice", "A:1:1.00"))
+		post(alice(), "/api/orders", orderJson("alice", "A:1"))
 				.expectStatus().isEqualTo(409)
 				.expectHeader().contentType(MediaType.APPLICATION_PROBLEM_JSON)
 				.expectBody().jsonPath("$.title").isEqualTo("Insufficient stock");
@@ -74,7 +74,7 @@ class Us02PlaceOrderStoryTest extends StoryTestSupport {
 		this.inventory.answerReservationsWith(503);
 		long before = orderCount();
 
-		post(alice(), "/api/orders", orderJson("alice", "A:1:1.00"))
+		post(alice(), "/api/orders", orderJson("alice", "A:1"))
 				.expectStatus().isEqualTo(503)
 				.expectBody().jsonPath("$.detail").isEqualTo("Stock could not be checked right now. Please try again later.");
 
@@ -87,11 +87,43 @@ class Us02PlaceOrderStoryTest extends StoryTestSupport {
 	@Test
 	@DisplayName("invalid input: 400 with one entry per field")
 	void invalidInput() {
-		post(alice(), "/api/orders", orderJson("alice", "A:0:-1"))
+		post(alice(), "/api/orders", orderJson("alice", "A:0"))
 				.expectStatus().isBadRequest()
 				.expectBody()
 				.jsonPath("$.errors[*].field").value((Object fields) -> assertThat(fields.toString())
-						.contains("lines[0].quantity").contains("lines[0].unitPrice"));
+						.contains("lines[0].quantity"));
+	}
+
+	@Test
+	@DisplayName("a price in the request body is ignored: the shop's price list decides")
+	void aClientPriceIsIgnored() {
+		String cheating = "{ \"customerId\": \"alice\", \"lines\": ["
+				+ "{ \"sku\": \"A\", \"quantity\": 2, \"unitPrice\": 0.01 },"
+				+ "{ \"sku\": \"B\", \"quantity\": 1, \"unitPrice\": 0.01 } ] }";
+
+		OrderV2 order = placeOrder(alice(), cheating);
+
+		assertThat(order.totals().amount()).isEqualByComparingTo("24.25");
+		assertThat(order.lines()).extracting(OrderV2.Line::unitPrice)
+				.usingElementComparator(java.math.BigDecimal::compareTo)
+				.containsExactly(new java.math.BigDecimal("10.50"), new java.math.BigDecimal("3.25"));
+		// The cheap payment she hoped for does not confirm the order.
+		pay(idOf(order), new java.math.BigDecimal("0.03")).expectStatus().isEqualTo(422);
+		assertThat(statusOf(idOf(order))).isEqualTo("PENDING_PAYMENT");
+	}
+
+	@Test
+	@DisplayName("an unknown SKU is 422 and no order is saved, before inventory is even asked")
+	void unknownSku() {
+		// If inventory were asked first, this would answer 503.
+		this.inventory.answerReservationsWith(503);
+		long before = orderCount();
+
+		post(alice(), "/api/orders", orderJson("alice", "A:1", "NO-SUCH-SKU:1"))
+				.expectStatus().isEqualTo(422)
+				.expectBody().jsonPath("$.sku").isEqualTo("NO-SUCH-SKU");
+
+		assertThat(orderCount()).isEqualTo(before);
 	}
 
 	private long orderCount() {

@@ -19,7 +19,12 @@ import tools.jackson.databind.json.JsonMapper;
 @Component
 public class OutboxEvents {
 
-	/** The column holds at most this many characters of JSON. */
+	/**
+	 * The column holds at most this many characters of JSON. An event over the limit makes {@link #add}
+	 * throw, which rolls back the business change that caused it. That is deliberate: the change and its
+	 * event are saved together or not at all, and a refused event is a bug to fix (shorten the payload or
+	 * widen the column), not something to drop silently. Today's events are a few hundred characters.
+	 */
 	static final int MAX_PAYLOAD_LENGTH = 4000;
 
 	private final JdbcClient jdbc;

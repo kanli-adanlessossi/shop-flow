@@ -45,7 +45,7 @@ import dasniko.testcontainers.keycloak.KeycloakContainer;
 class KeycloakSecurityIntegrationTest {
 
 	private static final String ALICES_ORDER = """
-			{ "customerId": "alice", "lines": [ { "sku": "A", "quantity": 1, "unitPrice": 5.00 } ] }
+			{ "customerId": "alice", "lines": [ { "sku": "A", "quantity": 1 } ] }
 			""";
 
 	@Autowired

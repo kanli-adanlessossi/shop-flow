@@ -69,9 +69,11 @@ public class DeadLetters {
 	}
 
 	public void handle(ConsumerRecord<String, EventEnvelope> record) {
-		String topic = headerText(record, KafkaHeaders.ORIGINAL_TOPIC);
-		Integer partition = headerInt(record, KafkaHeaders.ORIGINAL_PARTITION);
-		Long offset = headerLong(record, KafkaHeaders.ORIGINAL_OFFSET);
+		// The recoverer sets these headers. Without them (a record put on the topic by hand, for example)
+		// the record's own coordinates identify it, so it can still be stored.
+		String topic = originalTopic(record);
+		Integer partition = originalPartition(record);
+		Long offset = originalOffset(record);
 		String exceptionClass = headerText(record, KafkaHeaders.EXCEPTION_CAUSE_FQCN);
 		String error = headerText(record, KafkaHeaders.EXCEPTION_MESSAGE);
 		EventEnvelope event = record.value();
@@ -144,6 +146,21 @@ public class DeadLetters {
 		catch (RuntimeException ex) {
 			return event.toString();
 		}
+	}
+
+	static String originalTopic(ConsumerRecord<?, ?> record) {
+		String header = headerText(record, KafkaHeaders.ORIGINAL_TOPIC);
+		return header != null ? header : record.topic();
+	}
+
+	static Integer originalPartition(ConsumerRecord<?, ?> record) {
+		Integer header = headerInt(record, KafkaHeaders.ORIGINAL_PARTITION);
+		return header != null ? header : record.partition();
+	}
+
+	static Long originalOffset(ConsumerRecord<?, ?> record) {
+		Long header = headerLong(record, KafkaHeaders.ORIGINAL_OFFSET);
+		return header != null ? header : record.offset();
 	}
 
 	private static String cut(String text, int max) {

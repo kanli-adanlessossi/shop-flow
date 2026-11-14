@@ -4,7 +4,6 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 import java.util.List;
 
-import org.junit.jupiter.api.Disabled;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
@@ -27,7 +26,7 @@ class Us03ViewOrdersStoryTest extends StoryTestSupport {
 	@Test
 	@DisplayName("someone else's order is 403, a missing one 404")
 	void notHersOrMissing() {
-		long bobsOrder = idOf(placeOrder(bob(), orderJson("bob", "A:1:1.00")));
+		long bobsOrder = idOf(placeOrder(bob(), orderJson("bob", "A:1")));
 
 		get(alice(), "/api/orders/{id}", bobsOrder).expectStatus().isForbidden();
 		get(alice(), "/api/orders/{id}", 999_999_999).expectStatus().isNotFound();
@@ -67,16 +66,33 @@ class Us03ViewOrdersStoryTest extends StoryTestSupport {
 	}
 
 	@Test
-	@Disabled("open acceptance criterion of US-3 (docs/user-stories.md): the list is not yet restricted to the "
-			+ "caller's own orders; GET /api/orders returns every customer's orders")
-	@DisplayName("open: a customer's list shows only her own orders")
+	@DisplayName("a customer's list shows only her own orders; an admin's list shows everyone's")
 	void onlyOwnOrdersInTheList() {
-		placeOrder(bob(), orderJson("bob", "A:1:1.00"));
+		long alices = idOf(placeAlicesOrder());
+		long bobs = idOf(placeOrder(bob(), orderJson("bob", "A:1")));
 
 		get(alice(), "/api/orders?size=100")
 				.expectStatus().isOk()
 				.expectBody().jsonPath("$.content[*].customerId").value((Object customers) ->
-						assertThat((List<?>) customers).allMatch("alice"::equals));
+						assertThat((List<?>) customers).isNotEmpty().allMatch("alice"::equals));
+		get(alice(), "/api/orders?status=PENDING_PAYMENT&size=1000")
+				.expectStatus().isOk()
+				.expectBody()
+				.jsonPath("$.content[*].customerId").value((Object customers) ->
+						assertThat((List<?>) customers).isNotEmpty().allMatch("alice"::equals))
+				.jsonPath("$.content[*].id").value((Object ids) ->
+						assertThat((List<Object>) ids).contains((int) alices).doesNotContain((int) bobs));
+		// The count follows the same filter, so a customer cannot learn how many orders others have.
+		long alicesOrders = this.jdbc.sql("select count(*) from orders where customer_id = 'alice'")
+				.query(Long.class).single();
+		get(alice(), "/api/orders?size=1")
+				.expectStatus().isOk()
+				.expectBody().jsonPath("$.page.totalElements").isEqualTo(alicesOrders);
+
+		get(bob(), "/api/orders?size=1000")
+				.expectStatus().isOk()
+				.expectBody().jsonPath("$.content[*].id").value((Object ids) ->
+						assertThat((List<Object>) ids).contains((int) alices, (int) bobs));
 	}
 
 }

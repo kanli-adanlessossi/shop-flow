@@ -105,7 +105,7 @@ export function setup() {
     return { token: __ENV.ACCESS_TOKEN };
   }
   const login = http.post(
-    `/realms/shopflow/protocol/openid-connect/token`,
+    `${KEYCLOAK_URL}/realms/shopflow/protocol/openid-connect/token`,
     { grant_type: 'password', client_id: 'shopflow-web', username: LOAD_USER, password: LOAD_PASSWORD },
     { tags: { name: 'POST token' } },
   );

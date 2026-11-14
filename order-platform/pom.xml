@@ -12,19 +12,6 @@
 	<artifactId>order-platform</artifactId>
 	<name>order-platform</name>
 	<description/>
-	<url/>
-	<licenses>
-		<license/>
-	</licenses>
-	<developers>
-		<developer/>
-	</developers>
-	<scm>
-		<connection/>
-		<developerConnection/>
-		<tag/>
-		<url/>
-	</scm>
 	<properties>
 		<errorprone.version>2.52.0</errorprone.version>
 		<nullaway.version>0.14.3</nullaway.version>
