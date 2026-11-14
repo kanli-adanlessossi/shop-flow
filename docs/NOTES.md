@@ -441,7 +441,7 @@ clients).
 |---|---|---|---|
 | `alice` / `alice-pass` | password grant via `shopflow-web` | `customer` | a shopper |
 | `bob` / `bob-pass` | password grant via `shopflow-web` | `admin` | staff |
-| client `shopflow-service` (secret `shopflow-service-secret`) | client credentials | `admin` (on its service account `service-account-shopflow-service`) | another service, no human |
+| client `shopflow-service` (secret `shopflow-service-secret`) | client credentials | `admin` and `inventory` (on its service account `service-account-shopflow-service`) | another service, no human |
 
 `shopflow-web` is a public client (no secret) with the password grant for tools and tests and the
 authorization-code flow with PKCE for a browser front end. `shopflow-service` is confidential and
@@ -660,8 +660,42 @@ Details that matter:
   2 minute ShedLock lease, so a second instance cannot start while this one still sends. The rest of
   the batch goes out on the next run (every second), still in id order. `OutboxRelayRunLimitTest`
   drives the clock from a fake broker.
-- **inventory-service is a placeholder.** The module in this repo has no endpoints yet; order-platform
-  is only ever run and tested against the WireMock stand-in (`deploy/wiremock/inventory`), whose stubs
-  are the contract. Where these notes say "inventory-service" they mean that contract.
-  `inventory-service/README.md` says so, and the module now listens on 8081 (the port
-  `shopflow.inventory.base-url` points at) so it cannot clash with order-platform on 8080.
+- **inventory-service is real now** (see the next section). order-platform's own tests still run
+  against the WireMock stand-in (`deploy/wiremock/inventory`), which is now for failure drills; the
+  contract tests in `inventory-service` check that the stubs and the real service answer alike.
+---
+
+## inventory-service: how it works with order-platform
+
+Details of the module are in `inventory-service/README.md`. Decisions that cross the two apps:
+
+- **Security.** inventory-service is an OAuth2 resource server on the same Keycloak issuer as
+  order-platform and requires the realm role `inventory` on `/api/stock/**`. order-platform calls it with
+  a client-credentials token of the client `shopflow-service` (realm role `inventory` and `admin`), added
+  by Spring Security's `OAuth2ClientHttpRequestInterceptor`. The token is cached until shortly before it
+  expires, so there is no token request per call. Without Keycloak, startup still works (the token
+  endpoint is an explicit URI) and calls fail as an inventory outage: 503, release retried in the
+  background.
+- **Tokens in tests.** There is no test bypass and no production switch. Only the story tests call the
+  real `InventoryClient`, and they already start Keycloak, so they get real tokens; the other contexts
+  mock `StockReservations`. inventory-service tests ask Keycloak for real tokens as well, and share one
+  Spring context (every extra Keycloak context costs about 20 seconds of CI time).
+- **Event contract.** `order.confirmed` gained an optional `reservationId` (old messages still read).
+  New event `order.shipped {orderId, reservationId}`, written to the outbox when an order goes from
+  CONFIRMED to SHIPPED (a repeated PATCH writes nothing). order-platform's own consumer skips it without an
+  inbox row. inventory-service has its own copy of the event classes and reads only what it needs; the
+  rule from `EventEnvelope` applies to both: add optional fields only, never rename or remove.
+- **Release after shipping is 409.** Shipped stock has left the warehouse, so
+  `DELETE /api/stock/reservations/{id}` on a SHIPPED reservation answers 409 and changes nothing.
+  HELD and CONFIRMED reservations are released (204), an absent one is 404, which order-platform already
+  treats as released.
+- **Expiry TTL against cancel-after.** order-platform cancels unpaid orders after 30 minutes
+  (`shopflow.cancel-after`) and releases their stock. inventory-service releases `HELD` reservations
+  after 45 minutes (`shopflow.inventory.hold-ttl`), a safety net for a release that never arrived. The
+  TTL must stay above cancel-after, otherwise a slow payment could find its stock gone. `CONFIRMED` and
+  `SHIPPED` never expire. The job re-checks the status under a row lock, so a confirmation that arrives
+  while it runs wins.
+- **Compose profiles and start-only.** Kafka and Keycloak live once in the root `compose.yaml`. The two
+  databases are in the profiles `orders` and `inventory`, so each app's Docker Compose support sees only its own
+  PostgreSQL. Both apps use `lifecycle-management: start-only`: stopping one app never stops infrastructure the
+  other needs. Stop everything with `docker compose --profile orders --profile inventory down`.

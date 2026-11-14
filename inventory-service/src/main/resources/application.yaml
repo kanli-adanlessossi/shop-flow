@@ -23,6 +23,15 @@ spring:
       observation-enabled: true
     consumer:
       auto-offset-reset: earliest
+      # Wrapped so that a message that cannot be parsed is logged and skipped instead of failing the poll
+      # again and again (a "poison pill"); it ends up byte for byte in the dead-letter topic.
+      value-deserializer: org.springframework.kafka.support.serializer.ErrorHandlingDeserializer
+      properties:
+        spring.deserializer.value.delegate.class: org.springframework.kafka.support.serializer.JacksonJsonDeserializer
+        # Fixed target type: every value is read as EventEnvelope, whatever headers say.
+        spring.json.value.default.type: com.shopflow.inventory.events.EventEnvelope
+        spring.json.use.type.headers: false
+        spring.json.trusted.packages: com.shopflow.inventory.events
   security:
     oauth2:
       resourceserver:
@@ -51,3 +60,5 @@ shopflow:
     # How long a HELD reservation may wait for its order to be paid before it is released.
     # Keep it above order-platform's shopflow.cancel-after (30m).
     hold-ttl: 45m
+    expiry-cron: "0 */5 * * * *" # when the stale-hold cleanup runs (second minute hour day month weekday, UTC)
+    processed-events-retention: 14d # how long handled event ids are remembered; keep above the topic retention

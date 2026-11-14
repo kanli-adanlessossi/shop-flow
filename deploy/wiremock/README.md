@@ -3,13 +3,19 @@
 Two WireMock containers that replace the services order-platform calls, so you can try slow
 responses, errors and dropped connections without breaking a real service.
 
+**inventory-service is a real service now** (`inventory-service/`). The inventory stand-in is for
+failure drills only (slow, down, broken answers), which the real service cannot produce on demand. It
+**ignores the Bearer token** order-platform sends, and its stubs only cover the happy path. Its
+requests and answers are checked against the real service by the contract tests in `inventory-service`.
+
 | Service | URL | Stubs |
 |---|---|---|
 | inventory-service | `http://localhost:8081` | `GET /api/stock/{sku}`, `POST /api/stock/reservations`, `DELETE /api/stock/reservations/{reservationId}` |
 | payment provider | `http://localhost:8082` | `POST /api/payments/callbacks/verify` |
 
 Port 8081 is the default `shopflow.inventory.base-url`, so the app talks to the inventory stand-in
-with no configuration. The payment stub is not used by the app yet. Its request and response shape
+with no configuration. **The real inventory-service listens on 8081 too**: stop one before starting the
+other, or point `shopflow.inventory.base-url` at another port. The payment stub is not used by the app yet. Its request and response shape
 is invented, so change `payments/mappings/callback-verify.json` to match the real provider.
 
 The compose file is here, outside `order-platform/`, on purpose. Spring Boot's Docker Compose

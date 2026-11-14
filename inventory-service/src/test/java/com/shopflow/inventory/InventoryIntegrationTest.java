@@ -19,9 +19,7 @@ import dasniko.testcontainers.keycloak.KeycloakContainer;
  * <p>Requests commit and nothing is rolled back: each test uses its own reservation ids and SKUs
  * and asserts on those, never on totals across the database.
  */
-@SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT, properties = {
-		// No consumer yet: the events arrive with the Kafka consumer (FEAT-004), which flips this in one place.
-		"spring.kafka.listener.auto-startup=false" })
+@SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
 @AutoConfigureRestTestClient
 @Import({ TestcontainersConfiguration.class, KeycloakTestcontainersConfiguration.class })
 @Testcontainers(disabledWithoutDocker = true)

@@ -1,5 +1,7 @@
 package com.shopflow.inventory.domain;
 
+import java.time.Instant;
+import java.util.List;
 import java.util.Optional;
 
 import org.springframework.data.jpa.repository.JpaRepository;
@@ -45,4 +47,8 @@ public interface ReservationRepository extends JpaRepository<Reservation, String
 	@Query("select r from Reservation r where r.reservationId = :id")
 	Optional<Reservation> findForUpdate(@Param("id") String id);
 
+
+/** Ids of HELD reservations created before the cutoff, oldest first. */
+@Query("select r.reservationId from Reservation r where r.status = com.shopflow.inventory.domain.ReservationStatus.HELD and r.createdAt < :cutoff order by r.createdAt")
+List<String> findHeldIdsCreatedBefore(@Param("cutoff") Instant cutoff);
 }

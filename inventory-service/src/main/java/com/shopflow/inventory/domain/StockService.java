@@ -1,5 +1,6 @@
 package com.shopflow.inventory.domain;
 
+import java.time.Instant;
 import java.util.List;
 import java.util.Map;
 import java.util.TreeMap;
@@ -71,6 +72,29 @@ public class StockService {
 		if (reservation.getStatus() == ReservationStatus.SHIPPED) {
 			throw new ReservationShippedException(reservationId);
 		}
+		giveBack(reservation);
+	}
+
+	/**
+	 * Releases a reservation only if it is still HELD and was created before {@code cutoff}. The expiry job
+	 * finds candidates first and calls this per id, so a reservation confirmed in between is left alone.
+	 * Runs in its own transaction when called from outside one.
+	 *
+	 * @return whether the reservation was released
+	 */
+	@Transactional
+	public boolean releaseIfStillHeld(String reservationId, Instant cutoff) {
+		return this.reservations.findForUpdate(reservationId)
+				.filter(r -> r.getStatus() == ReservationStatus.HELD && r.getCreatedAt().isBefore(cutoff))
+				.map(r -> {
+					giveBack(r);
+					return true;
+				})
+				.orElse(false);
+	}
+
+	private void giveBack(Reservation reservation) {
+		String reservationId = reservation.getReservationId();
 		for (ReservationLine line : this.lines.findByReservationIdOrderBySku(reservationId)) {
 			this.stock.increment(line.getSku(), line.getQuantity());
 		}
