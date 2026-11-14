@@ -59,6 +59,11 @@ public class HeldReservationExpiry {
 				LOGGER.warn("Could not release expired reservation {}", id, ex);
 			}
 		}
+		Instant markerCutoff = this.clock.instant().minus(this.properties.processedEventsRetention());
+		int purged = this.reservations.deleteReleasedBefore(markerCutoff);
+		if (purged > 0) {
+			LOGGER.info("Deleted {} released-reservation markers older than {}", purged, this.properties.processedEventsRetention());
+		}
 		if (released > 0) {
 			LOGGER.info("Released {} reservations held longer than {}", released, this.properties.holdTtl());
 		}

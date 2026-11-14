@@ -67,7 +67,7 @@ public class StockController {
 	}
 
 	public record ReservationRequest(@NotBlank @Size(max = 100) String reservationId,
-			@NotEmpty List<@Valid Line> lines) {
+			@NotEmpty @Size(max = 100) List<@Valid Line> lines) {
 	}
 
 	public record Line(@NotBlank @Size(max = 64) String sku, @Min(1) @Max(1_000_000) int quantity) {

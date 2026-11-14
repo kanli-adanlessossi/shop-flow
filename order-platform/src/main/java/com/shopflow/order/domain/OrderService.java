@@ -228,6 +228,8 @@ public class OrderService {
 			// Only PENDING_PAYMENT orders get here (see the transition check above), and only a customer or an
 			// admin acting for them cancels an unpaid order, so one reason fits. "unpaid" is the cleanup job's.
 			this.events.add(new OrderCancelled(id, order.getCustomerId(), "cancelled on request"));
+			// Same safety net as the cleanup job: if the background release fails, the job retries it.
+			order.setStockReleasePending(true);
 			releaseAfterCommit(order.getReservationId());
 		}
 		if (status == OrderStatus.SHIPPED) {

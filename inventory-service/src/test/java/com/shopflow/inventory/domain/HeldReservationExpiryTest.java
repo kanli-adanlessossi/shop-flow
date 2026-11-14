@@ -41,8 +41,10 @@ class HeldReservationExpiryTest extends InventoryIntegrationTest {
 		return this.stock.available(sku);
 	}
 
+	/** A released reservation stays as a RELEASED marker row, which no longer counts as existing. */
 	private boolean exists(String reservationId) {
-		return this.jdbc.sql("select count(*) from reservation where reservation_id = ?").param(reservationId)
+		return this.jdbc.sql("select count(*) from reservation where reservation_id = ? and status <> 'RELEASED'")
+				.param(reservationId)
 				.query(Integer.class).single() == 1;
 	}
 

@@ -90,6 +90,15 @@ public class OutboxRelay {
 	@Scheduled(fixedDelayString = "${shopflow.outbox-relay-delay:1s}")
 	@SchedulerLock(name = "outboxRelay", lockAtMostFor = "2m")
 	public void publishPending() {
+		Instant deadline = this.clock.instant().plus(MAX_RUN);
+		// A full batch means more may be waiting: keep going instead of idling a second between batches.
+		while (publishBatch(deadline)) {
+			// publishBatch does the work
+		}
+	}
+
+	/** Sends one batch. Returns true only if the whole batch went out and it was full, so another may follow. */
+	private boolean publishBatch(Instant deadline) {
 		List<Row> rows = this.jdbc.sql("""
 				select id, event_id, message_key, payload from outbox_events
 				where published_at is null order by id limit :limit
@@ -99,28 +108,27 @@ public class OutboxRelay {
 						rs.getString("payload")))
 				.list();
 		int published = 0;
-		Instant deadline = this.clock.instant().plus(MAX_RUN);
 		for (Row row : rows) {
 			if (!this.clock.instant().isBefore(deadline)) {
 				// The ShedLock lease is about to run out: another instance could start while this run is
 				// still sending, and two relays at once can reorder events. Continue on the next run.
 				LOGGER.warn("Outbox relay stopped after {} (sent {} of {} rows); the rest follows on the next run",
 						MAX_RUN, published, rows.size());
-				return;
+				return false;
 			}
 			try {
 				this.kafka.send(OrderEvents.TOPIC, row.key(), row.payload()).get(SEND_TIMEOUT_SECONDS, TimeUnit.SECONDS);
 			}
 			catch (InterruptedException ex) {
 				Thread.currentThread().interrupt();
-				return;
+				return false;
 			}
 			catch (ExecutionException | TimeoutException | RuntimeException ex) {
 				// Stop here: sending a later row first would reorder events. Retried on the next run.
 				this.meters.counter(FAILURES).increment();
 				LOGGER.warn("Could not publish outbox event {} ({} sent this run); will retry: {}", row.eventId(),
 						published, String.valueOf(ex.getCause() != null ? ex.getCause() : ex));
-				return;
+				return false;
 			}
 			try {
 				this.jdbc.sql("update outbox_events set published_at = :now where id = :id")
@@ -133,13 +141,14 @@ public class OutboxRelay {
 				// consumers deduplicate by event id. Stop: later rows must not overtake this one.
 				LOGGER.error("Outbox event {} was sent to Kafka but could not be marked published; the next run "
 						+ "sends it again: {}", row.eventId(), ex.toString());
-				return;
+				return false;
 			}
 			published++;
 		}
 		if (published > 0) {
 			LOGGER.debug("Published {} outbox events", published);
 		}
+		return rows.size() == BATCH_SIZE;
 	}
 
 	/** Deletes published rows older than {@code shopflow.outbox-retention}. Daily at 03:40 UTC. */

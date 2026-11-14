@@ -17,6 +17,7 @@ import org.springframework.web.servlet.mvc.method.annotation.ResponseEntityExcep
 
 import com.shopflow.inventory.domain.InsufficientStockException;
 import com.shopflow.inventory.domain.ReservationNotFoundException;
+import com.shopflow.inventory.domain.ReservationReleasedException;
 import com.shopflow.inventory.domain.ReservationShippedException;
 import com.shopflow.inventory.domain.UnknownSkuException;
 
@@ -64,6 +65,15 @@ public class ApiExceptionHandler extends ResponseEntityExceptionHandler {
 		ProblemDetail problem = ProblemDetail.forStatusAndDetail(HttpStatus.CONFLICT, ex.getMessage());
 		problem.setType(RESERVATION_SHIPPED_TYPE);
 		problem.setTitle("Reservation already shipped");
+		problem.setProperty("reservationId", ex.getReservationId());
+		return problem;
+	}
+
+	@ExceptionHandler(ReservationReleasedException.class)
+	ProblemDetail handleReservationReleased(ReservationReleasedException ex) {
+		ProblemDetail problem = ProblemDetail.forStatusAndDetail(HttpStatus.CONFLICT, ex.getMessage());
+		problem.setType(URI.create("https://example.com/problems/reservation-released"));
+		problem.setTitle("Reservation already released");
 		problem.setProperty("reservationId", ex.getReservationId());
 		return problem;
 	}

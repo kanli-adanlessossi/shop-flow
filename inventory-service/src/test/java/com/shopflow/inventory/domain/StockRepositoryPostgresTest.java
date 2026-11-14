@@ -144,7 +144,7 @@ class StockRepositoryPostgresTest {
 		this.service.reserve(id, List.of(new StockLine(sku, 4)));
 		this.service.release(id);
 		assertThat(available(sku)).isEqualTo(10);
-		assertThat(reservationCount(id)).isZero();
+		assertThat(status(id)).isEqualTo("RELEASED");
 		assertThat(this.jdbc.queryForObject("select count(*) from reservation_line where reservation_id = ?",
 				Integer.class, id)).isZero();
 	}
@@ -157,7 +157,7 @@ class StockRepositoryPostgresTest {
 		this.service.confirm(id);
 		this.service.release(id);
 		assertThat(available(sku)).isEqualTo(10);
-		assertThat(reservationCount(id)).isZero();
+		assertThat(status(id)).isEqualTo("RELEASED");
 	}
 
 	@Test
@@ -177,13 +177,15 @@ class StockRepositoryPostgresTest {
 	}
 
 	@Test
-	void aReleasedReservationIdCanBeReservedAgain() {
+	void aReleasedReservationIdCannotReserveAgainAndReleasingTwiceIsNotFound() {
 		String sku = sku(10);
 		String id = id();
 		this.service.reserve(id, List.of(new StockLine(sku, 4)));
 		this.service.release(id);
-		this.service.reserve(id, List.of(new StockLine(sku, 4)));
-		assertThat(available(sku)).isEqualTo(6);
+		assertThatThrownBy(() -> this.service.reserve(id, List.of(new StockLine(sku, 4))))
+				.isInstanceOf(ReservationReleasedException.class);
+		assertThatThrownBy(() -> this.service.release(id)).isInstanceOf(ReservationNotFoundException.class);
+		assertThat(available(sku)).isEqualTo(10);
 	}
 
 	// ---- transitions --------------------------------------------------------------------
