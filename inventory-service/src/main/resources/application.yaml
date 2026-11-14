@@ -13,6 +13,10 @@ spring:
       # and Keycloak that order-platform uses too. The profile picks this app's database (postgres-inventory).
       file: ../compose.yaml
       lifecycle-management: start-only
+      start:
+        # Boot skips startup when any service of the file is running (order-platform's Kafka and Keycloak), which
+        # would leave this app without its database. `up` leaves running services as they are.
+        skip: never
       profiles:
         active: inventory
   kafka:
